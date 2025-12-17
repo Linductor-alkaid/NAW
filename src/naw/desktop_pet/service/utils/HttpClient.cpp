@@ -1,5 +1,5 @@
 #include "naw/desktop_pet/service/utils/HttpClient.h"
-#include "naw/desktop_pet/service/utils/HttpTypes.h"
+ #include "naw/desktop_pet/service/utils/HttpTypes.h"
 
 // 包含cpp-httplib头文件
 // 注意：如果不需要HTTPS支持，可以移除CPPHTTPLIB_OPENSSL_SUPPORT
@@ -213,6 +213,24 @@ std::future<HttpResponse> HttpClient::postAsync(const std::string& path,
     return executeAsync(request);
 }
 
+std::future<HttpResponse> HttpClient::patchAsync(const std::string& path,
+                                                const std::string& body,
+                                                const std::string& contentType,
+                                                const std::map<std::string, std::string>& headers) {
+    HttpRequest request;
+    request.method = HttpMethod::PATCH;
+    request.url = buildFullUrl(path);
+    request.body = body;
+    request.timeoutMs = m_timeoutMs;
+    request.followRedirects = m_followRedirects;
+
+    auto mergedHeaders = mergeHeaders(headers);
+    mergedHeaders["Content-Type"] = contentType;
+    request.headers = std::move(mergedHeaders);
+
+    return executeAsync(request);
+}
+
 std::future<HttpResponse> HttpClient::executeAsync(const HttpRequest& request) {
     return submitAsyncTask([this, request]() {
         return execute(request);
@@ -330,6 +348,15 @@ HttpResponse HttpClient::executeWithRetry(const HttpRequest& request) {
         // 如果还有重试机会
         if (attempt < m_retryConfig.maxRetries) {
             auto delay = m_retryConfig.getRetryDelay(attempt);
+            if (m_retryConfig.customBackoff) {
+                auto custom = m_retryConfig.customBackoff(attempt);
+                if (custom.count() >= 0) {
+                    delay = custom;
+                }
+            }
+            if (m_retryConfig.retryLogger) {
+                m_retryConfig.retryLogger(attempt, response);
+            }
             std::this_thread::sleep_for(delay);
             m_retryStats.totalRetries.fetch_add(1, std::memory_order_relaxed);
             attempt++;
@@ -355,6 +382,19 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
         // 准备请求头
         httplib::Headers headers;
         for (const auto& [key, value] : request.headers) {
+            // 头校验：拒绝控制字符与换行
+            bool invalid = false;
+            for (unsigned char c : key + value) {
+                if (c < 32 || c == 127 || c == '\r' || c == '\n') {
+                    invalid = true;
+                    break;
+                }
+            }
+            if (invalid) {
+                response.statusCode = 400;
+                response.error = "Invalid header detected";
+                return response;
+            }
             headers.emplace(key, value);
         }
         
@@ -396,10 +436,9 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
                 break;
             }
             case HttpMethod::PATCH: {
-                // httplib可能不支持PATCH，这里可以扩展
-                response.error = "PATCH method not yet implemented";
-                response.statusCode = 501;
-                return response;
+                result = client->Patch(path.c_str(), headers, request.body,
+                                      request.getHeader("Content-Type").value_or("application/json").c_str());
+                break;
             }
             default: {
                 response.error = "Unsupported HTTP method";

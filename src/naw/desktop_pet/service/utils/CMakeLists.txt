@@ -1,5 +1,5 @@
 # 选项控制示例构建
-option(BUILD_HTTPCLIENT_EXAMPLE "Build http_client_example" ON)
+option(BUILD_HTTPCLIENT_EXAMPLE "Build http_client_example" OFF)
 option(BUILD_TESTING "Build testing" OFF)
 # Service Utils 模块 CMakeLists.txt
 # HTTP客户端工具模块

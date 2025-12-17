@@ -81,6 +81,7 @@ public:
      * @brief 设置重试配置
      */
     void setRetryConfig(const RetryConfig& config);
+    RetryConfig getRetryConfig() const { return m_retryConfig; }
     
     /**
      * @brief 设置超时时间（毫秒）
@@ -176,6 +177,14 @@ public:
                                        const std::string& body = "",
                                        const std::string& contentType = "application/json",
                                        const std::map<std::string, std::string>& headers = {});
+
+    /**
+     * @brief 异步PATCH请求
+     */
+    std::future<HttpResponse> patchAsync(const std::string& path,
+                                         const std::string& body = "",
+                                         const std::string& contentType = "application/json",
+                                         const std::map<std::string, std::string>& headers = {});
 
     /**
      * @brief 异步通用请求

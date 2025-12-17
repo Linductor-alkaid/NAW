@@ -29,6 +29,9 @@ int main() {
     auto formResp = client.postForm("/post", formFields);
     std::cout << "[Form POST] status=" << formResp.statusCode
               << " error=" << formResp.error << "\n";
+    if (!formResp.body.empty()) {
+        std::cout << "[Form Body snippet] " << formResp.body.substr(0, 120) << "...\n";
+    }
 
     // 统计
     std::cout << "Active connections: " << client.getActiveConnections() << "\n";

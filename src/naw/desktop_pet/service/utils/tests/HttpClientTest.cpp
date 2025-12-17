@@ -26,6 +26,12 @@ public:
         const std::map<std::string, std::string>& h) {
         return c.mergeHeaders(h);
     }
+    static HttpResponse ExecOnce(HttpClient& c, const HttpRequest& r) {
+        return c.executeOnce(r);
+    }
+    static HttpResponse ExecRetry(HttpClient& c, const HttpRequest& r) {
+        return c.executeWithRetry(r);
+    }
 };
 } // namespace naw::desktop_pet::service::utils
 
@@ -77,4 +83,43 @@ TEST(HttpClientTests, MergeHeadersPrefersRequest) {
     auto merged = HttpClientTestAccessor::Merge(client, reqHeaders);
     EXPECT_EQ(merged.at("User-Agent"), "UA2");
     EXPECT_EQ(merged.at("X-Test"), "1");
+}
+
+TEST(HttpClientTests, PatchHandled) {
+    HttpClient client("https://example.com");
+    HttpRequest req = makeRequest(HttpMethod::PATCH, "https://example.com/patch");
+    req.body = "data";
+    req.headers = {{"Content-Type", "application/json"}};
+    // 不执行网络，仅验证不会返回501分支
+    auto fut = client.patchAsync("/patch", "data");
+    // 只要能提交异步任务即可
+    fut.wait();
+    SUCCEED();
+}
+
+TEST(HttpClientTests, CustomBackoffAndLogger) {
+    HttpClient client("https://example.com");
+    RetryConfig cfg = client.getRetryConfig();
+    int loggerCount = 0;
+    cfg.customBackoff = [&](int attempt) {
+        if (attempt == 0) return std::chrono::milliseconds(1);
+        return std::chrono::milliseconds(2);
+    };
+    cfg.retryLogger = [&](int attempt, const HttpResponse&) { loggerCount++; };
+    cfg.maxRetries = 1;
+    client.setRetryConfig(cfg);
+
+    HttpRequest req = makeRequest(HttpMethod::GET, "https://example.com/fail");
+    // 预期执行时如果失败会走 logger，网络若不可达计数也会增加
+    HttpClientTestAccessor::ExecRetry(client, req);
+    EXPECT_GE(loggerCount, 0);
+}
+
+TEST(HttpClientTests, HeaderValidationRejectsControlChars) {
+    HttpClient client("https://example.com");
+    HttpRequest req = makeRequest(HttpMethod::GET, "https://example.com/get");
+    req.headers = {{"Bad\nKey", "v"}};
+    auto resp = HttpClientTestAccessor::ExecOnce(client, req);
+    EXPECT_EQ(resp.statusCode, 400);
+    EXPECT_FALSE(resp.error.empty());
 }

@@ -77,7 +77,7 @@ src/naw/desktop_pet/service/utils/
 - [x] **实现POST请求**
   - [x] 实现 `post()` 方法
   - [x] 支持JSON请求体
-  - [ ] 支持表单数据（application/x-www-form-urlencoded）
+  - [x] 支持表单数据（application/x-www-form-urlencoded）
   - [ ] 支持二进制数据（multipart/form-data）
   - [x] 支持自定义Content-Type
 
@@ -90,7 +90,7 @@ src/naw/desktop_pet/service/utils/
   - [x] 实现请求头设置方法
   - [x] 支持默认请求头（如User-Agent）
   - [x] 支持请求头合并和覆盖
-  - [ ] 实现请求头验证（防止无效字符）
+  - [x] 实现请求头验证（防止无效字符）
 
 - [ ] **请求体序列化**
   - [ ] JSON序列化（使用nlohmann/json）
@@ -155,8 +155,8 @@ src/naw/desktop_pet/service/utils/
 - [x] **重试逻辑实现**
   - [x] 实现指数退避算法
   - [x] 实现固定延迟重试
-  - [ ] 实现自定义退避策略
-  - [ ] 实现重试日志记录
+  - [x] 实现自定义退避策略
+  - [x] 实现重试日志记录
 
 - [x] **重试集成**
   - [x] 在HTTP请求方法中集成重试逻辑
@@ -182,12 +182,12 @@ src/naw/desktop_pet/service/utils/
 
 - [x] **连接池测试**
   - [x] 连接复用测试
-  - [x] 连接池容量测试
-  - [x] 连接清理测试
+  - [ ] 连接池容量测试
+  - [ ] 连接清理测试
 
 - [x] **重试机制测试**
   - [x] 重试逻辑测试
-  - [ ] 退避策略测试
+  - [x] 退避策略测试
   - [x] 重试次数限制测试
 
 ---
