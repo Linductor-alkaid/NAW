@@ -174,6 +174,9 @@ public:
     double getConnectionReuseRate() const;
     RetryStatsSnapshot getRetryStats() const;
 
+    // 测试辅助访问（gtest友元）
+    friend class HttpClientTestAccessor;
+
 private:
     /**
      * @brief 创建或获取httplib客户端
