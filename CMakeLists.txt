@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.15)
-project(NAW_System VERSION 1.0.0 LANGUAGES CXX)
+project(NAW_System VERSION 1.0.0 LANGUAGES C CXX)
 
 # 全局启用 CTest，生成测试相关目标与配置
 include(CTest)

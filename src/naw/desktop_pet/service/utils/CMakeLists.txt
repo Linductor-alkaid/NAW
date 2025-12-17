@@ -1,5 +1,6 @@
 # 选项控制示例构建
 option(BUILD_HTTPCLIENT_EXAMPLE "Build http_client_example" OFF)
+option(BUILD_AUDIOPROCESSOR_EXAMPLE "Build audio_processor_example" OFF)
 option(BUILD_TESTING "Build testing" OFF)
 # Service Utils 模块 CMakeLists.txt
 # HTTP客户端工具模块
@@ -34,6 +35,8 @@ set(SERVICE_UTILS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/HttpSerialization.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TokenCounter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TokenUsageClient.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/AudioProcessor.cpp
+    ${CMAKE_SOURCE_DIR}/third_party/miniaudio/miniaudio.c
 )
 
 # ============================================================================
@@ -45,6 +48,7 @@ set(SERVICE_UTILS_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpSerialization.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/TokenCounter.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/TokenUsageClient.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/AudioProcessor.h
 )
 
 # ============================================================================
@@ -63,6 +67,7 @@ target_include_directories(NAW_ServiceUtils
         ${CMAKE_SOURCE_DIR}/include
         ${HTTPLIB_INCLUDE_DIR}
         ${CMAKE_SOURCE_DIR}/third_party/json/single_include
+        ${CMAKE_SOURCE_DIR}/third_party/miniaudio
 )
 
 # ============================================================================
@@ -72,6 +77,11 @@ target_compile_options(NAW_ServiceUtils
     PRIVATE
         ${PROJECT_COMPILE_OPTIONS}
         $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_compile_definitions(NAW_ServiceUtils
+    PRIVATE
+        MA_ENABLE_WASAPI
 )
 
 # ============================================================================
@@ -140,4 +150,12 @@ if(BUILD_HTTPCLIENT_EXAMPLE)
     )
     target_link_libraries(http_client_example PRIVATE NAW_ServiceUtils)
     target_include_directories(http_client_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
+endif()
+
+if(BUILD_AUDIOPROCESSOR_EXAMPLE)
+    add_executable(audio_processor_example
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/audio_processor_example.cpp
+    )
+    target_link_libraries(audio_processor_example PRIVATE NAW_ServiceUtils)
+    target_include_directories(audio_processor_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
 endif()
