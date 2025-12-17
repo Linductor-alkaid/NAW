@@ -6,6 +6,7 @@
 #include <cstring>
 #include <cctype>
 #include <string>
+#include <future>
 #include <miniaudio.h>
 #include <thread>
 #include <iostream>
@@ -570,19 +571,34 @@ void AudioProcessor::onCaptureFrames(const void* pInput, std::uint32_t frameCoun
                 // *** 关键修复：生成唯一文件名 ***
                 AudioStreamConfig stream = captureOptions_.stream;
                 std::vector<std::uint8_t> pcm = std::move(collectingBuffer_);
+                // 裁剪前后静音，避免播放空白
+                if (!trimSilence(stream, pcm, vadConfig_.stopThresholdDb)) {
+                    std::cout << "[VAD] skip silent segment\n";
+                    currentBelowFrames_ = 0;
+                    currentAboveFrames_ = 0;
+                    vadState_ = VADState::Listening;
+                    return;
+                }
                 
                 // 生成唯一的输出路径（带时间戳和计数器）
                 const std::string outPath = generateUniqueVadPath(vadConfig_.outputWavPath);
-                
-                // 记录文件路径以便后续清理
+                auto writePromise = std::make_shared<std::promise<void>>();
+                std::shared_future<void> ready = writePromise->get_future().share();
+
+                // 记录文件路径及任务，以便后续清理/等待
                 {
                     std::lock_guard<std::mutex> lock(vadFilesMutex_);
-                    vadCapturedFiles_.push_back(outPath);
+                    vadCapturedFiles_.push_back(VADFileRecord{outPath, ready});
                 }
-                
+
                 // 在独立线程中写文件并触发回调
-                std::thread([this, stream, outPath, data = std::move(pcm)]() {
-                    writePcmToWav(outPath, stream, data);
+                std::thread([this, stream, outPath, data = std::move(pcm), writePromise]() mutable {
+                    try {
+                        writePcmToWav(outPath, stream, data);
+                    } catch (...) {
+                        // 保证 promise 被兑现，避免等待卡住
+                    }
+                    writePromise->set_value();
                     if (vadCallbacks_.onComplete) {
                         vadCallbacks_.onComplete(outPath);
                     }
@@ -590,6 +606,8 @@ void AudioProcessor::onCaptureFrames(const void* pInput, std::uint32_t frameCoun
                 
                 currentBelowFrames_ = 0;
                 currentAboveFrames_ = 0;
+                // 录音完成后，仅保留极短前置历史，避免后续触发从过久前播放
+                resetRingAfterCapture(frameSizeBytes(stream), 0.5); // 保留0.5s
                 vadState_ = VADState::Listening;
             }
             return;
@@ -859,6 +877,66 @@ float AudioProcessor::computeDb(const void* pcm, std::uint32_t frames) const {
     return dbfsFromRms(static_cast<float>(rms));
 }
 
+bool AudioProcessor::trimSilence(const AudioStreamConfig& stream,
+                                 std::vector<std::uint8_t>& pcm,
+                                 float thresholdDb) const {
+    if (pcm.empty()) {
+        return false;
+    }
+    const auto frameSize = frameSizeBytes(stream);
+    if (frameSize == 0 || stream.channels == 0) {
+        return false;
+    }
+    const float threshold = std::pow(10.0f, thresholdDb / 20.0f);
+    const std::size_t bytesPerSample = ma_get_bytes_per_sample(toMiniaudioFormat(stream.format));
+    const std::size_t totalSamples = pcm.size() / bytesPerSample;
+
+    auto sampleValue = [&](std::size_t idx) -> float {
+        if (stream.format == AudioFormat::S16) {
+            const auto* p = reinterpret_cast<const std::int16_t*>(pcm.data());
+            return std::abs(static_cast<float>(p[idx]) / 32768.0f);
+        }
+        const auto* p = reinterpret_cast<const float*>(pcm.data());
+        return std::abs(p[idx]);
+    };
+
+    std::size_t first = totalSamples;
+    for (std::size_t i = 0; i < totalSamples; ++i) {
+        if (sampleValue(i) >= threshold) {
+            first = i;
+            break;
+        }
+    }
+    if (first == totalSamples) {
+        pcm.clear();
+        return false; // 全部静音
+    }
+
+    std::size_t last = 0;
+    for (std::size_t i = totalSamples; i-- > 0;) {
+        if (sampleValue(i) >= threshold) {
+            last = i;
+            break;
+        }
+    }
+
+    const std::size_t startFrame = first / stream.channels;
+    const std::size_t endFrame = last / stream.channels;
+    const std::size_t startByte = startFrame * frameSize;
+    const std::size_t endByteExclusive = (endFrame + 1) * frameSize;
+
+    if (startByte == 0 && endByteExclusive == pcm.size()) {
+        return true; // 无需裁剪
+    }
+
+    std::vector<std::uint8_t> trimmed;
+    trimmed.insert(trimmed.end(),
+                   pcm.begin() + static_cast<std::ptrdiff_t>(startByte),
+                   pcm.begin() + static_cast<std::ptrdiff_t>(endByteExclusive));
+    pcm.swap(trimmed);
+    return true;
+}
+
 void AudioProcessor::ensureRingCapacity(std::size_t bytes, std::size_t bytesPerFrame) {
     const std::uint32_t sr = captureOptions_.stream.sampleRate == 0 ? 48000u : captureOptions_.stream.sampleRate;
     const std::size_t target = bytesPerFrame * static_cast<std::size_t>(vadConfig_.maxBufferSeconds * sr + 0.5);
@@ -889,6 +967,46 @@ void AudioProcessor::pushRing(const void* pcm, std::size_t bytes) {
 void AudioProcessor::appendCollecting(const void* pcm, std::size_t bytes) {
     const auto* src = static_cast<const std::uint8_t*>(pcm);
     collectingBuffer_.insert(collectingBuffer_.end(), src, src + bytes);
+}
+
+void AudioProcessor::resetRingAfterCapture(std::size_t bytesPerFrame, double prerollSeconds) {
+    if (ring_.capacityBytes == 0) {
+        return;
+    }
+    const std::uint32_t sr = captureOptions_.stream.sampleRate == 0 ? 48000u : captureOptions_.stream.sampleRate;
+    const std::size_t targetBytes = static_cast<std::size_t>(std::max(0.0, prerollSeconds) * sr * bytesPerFrame + 0.5);
+    if (targetBytes == 0) {
+        ring_.sizeBytes = 0;
+        ring_.writePos = 0;
+        return;
+    }
+
+    // 如果当前环形缓冲小于目标，直接清空
+    if (ring_.sizeBytes <= targetBytes) {
+        return;
+    }
+
+    // 仅保留最近 targetBytes 的数据
+    const std::size_t cap = ring_.capacityBytes;
+    const std::size_t start = (ring_.writePos + cap - targetBytes) % cap;
+    std::vector<std::uint8_t> temp(targetBytes, 0);
+    if (start + targetBytes <= cap) {
+        std::copy(ring_.data.begin() + static_cast<std::ptrdiff_t>(start),
+                  ring_.data.begin() + static_cast<std::ptrdiff_t>(start + targetBytes),
+                  temp.begin());
+    } else {
+        const std::size_t first = cap - start;
+        std::copy(ring_.data.begin() + static_cast<std::ptrdiff_t>(start),
+                  ring_.data.end(),
+                  temp.begin());
+        std::copy(ring_.data.begin(),
+                  ring_.data.begin() + static_cast<std::ptrdiff_t>(targetBytes - first),
+                  temp.begin() + static_cast<std::ptrdiff_t>(first));
+    }
+    ring_.data.swap(temp);
+    ring_.capacityBytes = targetBytes;
+    ring_.sizeBytes = targetBytes;
+    ring_.writePos = targetBytes % ring_.capacityBytes;
 }
 
 bool AudioProcessor::startPassiveListening(const VADConfig& vadCfg,
@@ -952,20 +1070,25 @@ void AudioProcessor::stopPassiveListening() {
 }
 
 void AudioProcessor::cleanupOldVadFiles() {
-    std::lock_guard<std::mutex> lock(vadFilesMutex_);
-    
-    for (const auto& path : vadCapturedFiles_) {
+    std::vector<VADFileRecord> records;
+    {
+        std::lock_guard<std::mutex> lock(vadFilesMutex_);
+        records.swap(vadCapturedFiles_);
+    }
+
+    for (auto& record : records) {
         try {
-            if (std::filesystem::exists(path)) {
-                std::filesystem::remove(path);
-                std::cout << "[VAD] Cleaned up: " << path << "\n";
+            if (record.ready.valid()) {
+                record.ready.wait();
+            }
+            if (std::filesystem::exists(record.path)) {
+                std::filesystem::remove(record.path);
+                std::cout << "[VAD] Cleaned up: " << record.path << "\n";
             }
         } catch (const std::exception& e) {
-            std::cerr << "[VAD] Failed to delete " << path << ": " << e.what() << "\n";
+            std::cerr << "[VAD] Failed to delete " << record.path << ": " << e.what() << "\n";
         }
     }
-    
-    vadCapturedFiles_.clear();
 }
 
 std::string AudioProcessor::generateUniqueVadPath(const std::string& basePath) {
@@ -994,6 +1117,35 @@ std::string AudioProcessor::generateUniqueVadPath(const std::string& basePath) {
     }
     
     return outPath;
+}
+
+bool AudioProcessor::removeVadFile(const std::string& path) {
+    std::optional<VADFileRecord> record;
+    {
+        std::lock_guard<std::mutex> lock(vadFilesMutex_);
+        auto it = std::find_if(vadCapturedFiles_.begin(), vadCapturedFiles_.end(),
+                               [&](const VADFileRecord& r) { return r.path == path; });
+        if (it != vadCapturedFiles_.end()) {
+            record = *it;
+            vadCapturedFiles_.erase(it);
+        }
+    }
+
+    // 等待写入完成
+    if (record.has_value() && record->ready.valid()) {
+        record->ready.wait();
+    }
+
+    try {
+        if (std::filesystem::exists(path)) {
+            std::filesystem::remove(path);
+            std::cout << "[VAD] Deleted: " << path << "\n";
+        }
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "[VAD] Failed to delete " << path << ": " << e.what() << "\n";
+        return false;
+    }
 }
 
 } // namespace naw::desktop_pet::service::utils

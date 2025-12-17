@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -130,6 +131,11 @@ public:
                                const VADCallbacks& cbs = {});
     void stopPassiveListening();
     bool isPassiveListening() const { return passiveListening_; }
+    /**
+     * @brief 删除指定的 VAD 录音文件（会等待写入完成）
+     * @return 删除是否成功或文件不存在
+     */
+    bool removeVadFile(const std::string& path);
 
 private:
     struct SoundHandle {
@@ -184,9 +190,13 @@ private:
     float lastDb_{-90.0f};
 
     // *** VAD 文件管理 - 新增 ***
-    std::atomic<std::uint32_t> vadCaptureCounter_{0};  // VAD 录音计数器
-    std::vector<std::string> vadCapturedFiles_;         // 记录所有生成的 VAD 文件
-    std::mutex vadFilesMutex_;                          // 保护 vadCapturedFiles_
+    struct VADFileRecord {
+        std::string path;
+        std::shared_future<void> ready; // 写文件完成信号
+    };
+    std::atomic<std::uint32_t> vadCaptureCounter_{0};      // VAD 录音计数器
+    std::vector<VADFileRecord> vadCapturedFiles_;          // 记录所有生成的 VAD 文件及写入状态
+    std::mutex vadFilesMutex_;                             // 保护 vadCapturedFiles_
 
     // 内部工具
     ma_format toMiniaudioFormat(AudioFormat fmt) const;
@@ -197,6 +207,10 @@ private:
     void ensureRingCapacity(std::size_t bytes, std::size_t bytesPerFrame);
     void pushRing(const void* pcm, std::size_t bytes);
     void appendCollecting(const void* pcm, std::size_t bytes);
+    bool trimSilence(const AudioStreamConfig& stream,
+                     std::vector<std::uint8_t>& pcm,
+                     float thresholdDb) const;
+    void resetRingAfterCapture(std::size_t bytesPerFrame, double prerollSeconds);
 
     // *** VAD 文件管理函数 - 新增 ***
     /**

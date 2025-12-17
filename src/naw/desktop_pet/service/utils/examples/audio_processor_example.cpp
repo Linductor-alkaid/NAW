@@ -38,6 +38,17 @@ int main() {
     std::mutex pathMutex;
     std::string savedPath;
     std::optional<std::uint32_t> playbackId;
+    auto deleteSaved = [&]() {
+        std::string toDelete;
+        {
+            std::lock_guard<std::mutex> lock(pathMutex);
+            toDelete = savedPath;
+            savedPath.clear();
+        }
+        if (!toDelete.empty()) {
+            audio.removeVadFile(toDelete);
+        }
+    };
 
     VADCallbacks cbs{};
     cbs.onTrigger = []() { 
@@ -48,10 +59,18 @@ int main() {
         std::cout << "[VAD] saved: " << path << "\n";
         
         // *** 关键修复：停止之前的播放 ***
+        std::string previousPath;
+        {
+            std::lock_guard<std::mutex> lock(pathMutex);
+            previousPath = savedPath;
+        }
         if (playbackId.has_value()) {
             std::cout << "[Playback] stopping previous playback id=" << *playbackId << "\n";
             audio.stop(*playbackId);
             playbackId.reset();
+        }
+        if (!previousPath.empty()) {
+            audio.removeVadFile(previousPath);
         }
         
         {
@@ -66,6 +85,7 @@ int main() {
             std::cout << "[Playback] started new playback id=" << *id << "\n";
         } else {
             std::cout << "[Playback] failed to start\n";
+            deleteSaved();
         }
         captured.store(true);
     };
@@ -96,6 +116,7 @@ int main() {
 
     // 停止所有播放
     audio.stopAll();
+    deleteSaved();
     
     // shutdown 会自动清理所有 VAD 文件
     audio.shutdown();
