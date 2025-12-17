@@ -76,6 +76,7 @@ public:
      * @brief 设置连接池配置
      */
     void setConnectionPoolConfig(const ConnectionPoolConfig& config);
+    ConnectionPoolConfig getConnectionPoolConfig() const { return m_poolConfig; }
     
     /**
      * @brief 设置重试配置
@@ -149,6 +150,20 @@ public:
     HttpResponse postForm(const std::string& path,
                          const std::map<std::string, std::string>& formFields,
                          const std::map<std::string, std::string>& headers = {});
+
+    struct MultipartFile {
+        std::string filename;
+        std::string contentType;
+        std::string data; // 简化：内存数据
+    };
+
+    /**
+     * @brief multipart/form-data POST
+     */
+    HttpResponse postMultipart(const std::string& path,
+                               const std::map<std::string, std::string>& fields,
+                               const std::map<std::string, MultipartFile>& files,
+                               const std::map<std::string, std::string>& headers = {});
     
     /**
      * @brief DELETE请求
@@ -163,12 +178,18 @@ public:
 
     // ========== 异步请求方法 ==========
 
+    struct CancelToken {
+        std::shared_ptr<std::atomic<bool>> cancelled;
+    };
+
     /**
      * @brief 异步GET请求（基于内部线程池）
      */
     std::future<HttpResponse> getAsync(const std::string& path,
                                       const std::map<std::string, std::string>& params = {},
-                                      const std::map<std::string, std::string>& headers = {});
+                                      const std::map<std::string, std::string>& headers = {},
+                                      std::function<void(const HttpResponse&)> callback = nullptr,
+                                      CancelToken* token = nullptr);
 
     /**
      * @brief 异步POST请求
@@ -176,7 +197,9 @@ public:
     std::future<HttpResponse> postAsync(const std::string& path,
                                        const std::string& body = "",
                                        const std::string& contentType = "application/json",
-                                       const std::map<std::string, std::string>& headers = {});
+                                       const std::map<std::string, std::string>& headers = {},
+                                       std::function<void(const HttpResponse&)> callback = nullptr,
+                                       CancelToken* token = nullptr);
 
     /**
      * @brief 异步PATCH请求
@@ -184,12 +207,16 @@ public:
     std::future<HttpResponse> patchAsync(const std::string& path,
                                          const std::string& body = "",
                                          const std::string& contentType = "application/json",
-                                         const std::map<std::string, std::string>& headers = {});
+                                         const std::map<std::string, std::string>& headers = {},
+                                         std::function<void(const HttpResponse&)> callback = nullptr,
+                                         CancelToken* token = nullptr);
 
     /**
      * @brief 异步通用请求
      */
-    std::future<HttpResponse> executeAsync(const HttpRequest& request);
+    std::future<HttpResponse> executeAsync(const HttpRequest& request,
+                                           std::function<void(const HttpResponse&)> callback = nullptr,
+                                           CancelToken* token = nullptr);
 
     // ========== 统计接口（轻量级） ==========
     size_t getActiveConnections() const;

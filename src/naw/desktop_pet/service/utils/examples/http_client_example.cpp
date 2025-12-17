@@ -33,6 +33,20 @@ int main() {
         std::cout << "[Form Body snippet] " << formResp.body.substr(0, 120) << "...\n";
     }
 
+    // multipart POST（文本 + 伪文件）
+    HttpClient::MultipartFile file;
+    file.filename = "hello.txt";
+    file.contentType = "text/plain";
+    file.data = "hello from multipart";
+    auto mpResp = client.postMultipart("/post",
+                                       {{"text", "demo"}},
+                                       {{"file1", file}});
+    std::cout << "[Multipart POST] status=" << mpResp.statusCode
+              << " error=" << mpResp.error << "\n";
+    if (!mpResp.body.empty()) {
+        std::cout << "[Multipart Body snippet] " << mpResp.body.substr(0, 120) << "...\n";
+    }
+
     // 统计
     std::cout << "Active connections: " << client.getActiveConnections() << "\n";
     std::cout << "Total connections: " << client.getTotalConnections() << "\n";

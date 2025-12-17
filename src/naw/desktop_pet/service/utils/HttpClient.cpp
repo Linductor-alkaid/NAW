@@ -184,7 +184,9 @@ HttpResponse HttpClient::execute(const HttpRequest& request) {
 
 std::future<HttpResponse> HttpClient::getAsync(const std::string& path,
                                               const std::map<std::string, std::string>& params,
-                                              const std::map<std::string, std::string>& headers) {
+                                              const std::map<std::string, std::string>& headers,
+                                              std::function<void(const HttpResponse&)> callback,
+                                              CancelToken* token) {
     HttpRequest request;
     request.method = HttpMethod::GET;
     request.url = buildFullUrl(path);
@@ -192,13 +194,15 @@ std::future<HttpResponse> HttpClient::getAsync(const std::string& path,
     request.headers = mergeHeaders(headers);
     request.timeoutMs = m_timeoutMs;
     request.followRedirects = m_followRedirects;
-    return executeAsync(request);
+    return executeAsync(request, std::move(callback), token);
 }
 
 std::future<HttpResponse> HttpClient::postAsync(const std::string& path,
                                                const std::string& body,
                                                const std::string& contentType,
-                                               const std::map<std::string, std::string>& headers) {
+                                               const std::map<std::string, std::string>& headers,
+                                               std::function<void(const HttpResponse&)> callback,
+                                               CancelToken* token) {
     HttpRequest request;
     request.method = HttpMethod::POST;
     request.url = buildFullUrl(path);
@@ -210,13 +214,15 @@ std::future<HttpResponse> HttpClient::postAsync(const std::string& path,
     mergedHeaders["Content-Type"] = contentType;
     request.headers = std::move(mergedHeaders);
 
-    return executeAsync(request);
+    return executeAsync(request, std::move(callback), token);
 }
 
 std::future<HttpResponse> HttpClient::patchAsync(const std::string& path,
                                                 const std::string& body,
                                                 const std::string& contentType,
-                                                const std::map<std::string, std::string>& headers) {
+                                                const std::map<std::string, std::string>& headers,
+                                                std::function<void(const HttpResponse&)> callback,
+                                                CancelToken* token) {
     HttpRequest request;
     request.method = HttpMethod::PATCH;
     request.url = buildFullUrl(path);
@@ -228,12 +234,23 @@ std::future<HttpResponse> HttpClient::patchAsync(const std::string& path,
     mergedHeaders["Content-Type"] = contentType;
     request.headers = std::move(mergedHeaders);
 
-    return executeAsync(request);
+    return executeAsync(request, std::move(callback), token);
 }
 
-std::future<HttpResponse> HttpClient::executeAsync(const HttpRequest& request) {
-    return submitAsyncTask([this, request]() {
-        return execute(request);
+std::future<HttpResponse> HttpClient::executeAsync(const HttpRequest& request,
+                                                   std::function<void(const HttpResponse&)> callback,
+                                                   CancelToken* token) {
+    return submitAsyncTask([this, request, cb = std::move(callback), token]() {
+        if (token && token->cancelled && token->cancelled->load(std::memory_order_relaxed)) {
+            HttpResponse cancelled;
+            cancelled.statusCode = 0;
+            cancelled.error = "Cancelled";
+            if (cb) cb(cancelled);
+            return cancelled;
+        }
+        auto resp = execute(request);
+        if (cb) cb(resp);
+        return resp;
     });
 }
 
@@ -263,9 +280,71 @@ HttpResponse HttpClient::postForm(const std::string& path,
     for (const auto& [k, v] : formFields) {
         if (!first) bodyStream << "&";
         first = false;
-        bodyStream << k << "=" << v; // 简化：未进行URL编码，可按需扩展
+        // 简化编码：复用 HttpRequest::buildUrl 的安全字符判断
+        auto encode = [](const std::string& str) {
+            std::ostringstream oss;
+            oss << std::uppercase << std::hex << std::setfill('0');
+            for (unsigned char c : str) {
+                if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+                    oss << static_cast<char>(c);
+                } else {
+                    oss << '%' << std::setw(2) << static_cast<int>(c);
+                }
+            }
+            return oss.str();
+        };
+        bodyStream << encode(k) << "=" << encode(v);
     }
     return post(path, bodyStream.str(), "application/x-www-form-urlencoded", headers);
+}
+
+HttpResponse HttpClient::postMultipart(const std::string& path,
+                                       const std::map<std::string, std::string>& fields,
+                                       const std::map<std::string, MultipartFile>& files,
+                                       const std::map<std::string, std::string>& headers) {
+    // 构造 boundary
+    std::string boundary = "----NAWBoundary";
+    boundary += std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+
+    auto hasCtrl = [](const std::string& s) {
+        for (unsigned char c : s) {
+            if (c < 32 || c == 127 || c == '\r' || c == '\n') return true;
+        }
+        return false;
+    };
+
+    std::ostringstream body;
+    // 文本字段
+    for (const auto& [k, v] : fields) {
+        if (hasCtrl(k) || hasCtrl(v)) {
+            HttpResponse resp;
+            resp.statusCode = 400;
+            resp.error = "Invalid multipart field";
+            return resp;
+        }
+        body << "--" << boundary << "\r\n";
+        body << "Content-Disposition: form-data; name=\"" << k << "\"\r\n\r\n";
+        body << v << "\r\n";
+    }
+    // 文件字段（简化：内存数据）
+    for (const auto& [k, f] : files) {
+        if (hasCtrl(k) || hasCtrl(f.filename) || hasCtrl(f.contentType)) {
+            HttpResponse resp;
+            resp.statusCode = 400;
+            resp.error = "Invalid multipart file field";
+            return resp;
+        }
+        body << "--" << boundary << "\r\n";
+        body << "Content-Disposition: form-data; name=\"" << k << "\"; filename=\"" << f.filename << "\"\r\n";
+        body << "Content-Type: " << (f.contentType.empty() ? "application/octet-stream" : f.contentType) << "\r\n\r\n";
+        body << f.data << "\r\n";
+    }
+    body << "--" << boundary << "--\r\n";
+
+    auto mergedHeaders = mergeHeaders(headers);
+    mergedHeaders["Content-Type"] = "multipart/form-data; boundary=" + boundary;
+
+    return post(path, body.str(), mergedHeaders["Content-Type"], mergedHeaders);
 }
 
 // ========== 私有方法 ==========
@@ -612,12 +691,10 @@ std::future<HttpResponse> HttpClient::submitAsyncTask(std::function<HttpResponse
     {
         std::lock_guard<std::mutex> lock(m_queueMutex);
         if (m_stopWorkers) {
-            // 若已停止，立即返回错误
             packaged();
             return fut;
         }
 
-        // std::function 需可复制，使用 shared_ptr 持有 move-only packaged_task
         auto taskPtr = std::make_shared<std::packaged_task<HttpResponse()>>(std::move(packaged));
         m_tasks.emplace([taskPtr]() { (*taskPtr)(); });
     }

@@ -123,3 +123,67 @@ TEST(HttpClientTests, HeaderValidationRejectsControlChars) {
     EXPECT_EQ(resp.statusCode, 400);
     EXPECT_FALSE(resp.error.empty());
 }
+
+TEST(HttpClientTests, MultipartBuildsBoundaryAndRejectsCtrl) {
+    HttpClient client("https://example.com");
+    // 正常字段
+    HttpResponse ok = client.postMultipart("/post",
+                                           {{"k", "v"}},
+                                           {},
+                                           {});
+    // 即便无网络，至少不因字段校验失败返回400
+    EXPECT_NE(ok.statusCode, 400);
+
+    // 非法字段
+    HttpResponse bad = client.postMultipart("/post",
+                                            {{"bad\nk", "v"}},
+                                            {},
+                                            {});
+    EXPECT_EQ(bad.statusCode, 400);
+}
+
+TEST(HttpClientTests, AsyncCallbackAndCancel) {
+    HttpClient client("https://example.com");
+    int callbackCount = 0;
+    HttpClient::CancelToken token{std::make_shared<std::atomic<bool>>(false)};
+
+    auto fut1 = client.getAsync("/get", {}, {}, [&](const HttpResponse&) { callbackCount++; });
+    fut1.wait();
+    EXPECT_GE(callbackCount, 1);
+
+    // 提交后立即取消，预期返回 Cancelled
+    token.cancelled->store(true, std::memory_order_relaxed);
+    auto fut2 = client.getAsync("/get", {}, {}, nullptr, &token);
+    auto r = fut2.get();
+    EXPECT_EQ(r.statusCode, 0);
+    EXPECT_EQ(r.error, "Cancelled");
+}
+
+TEST(HttpClientTests, AsyncConcurrentCancel) {
+    HttpClient client("https://example.com");
+    HttpClient::CancelToken tok1{std::make_shared<std::atomic<bool>>(true)};
+    HttpClient::CancelToken tok2{std::make_shared<std::atomic<bool>>(true)};
+
+    auto f1 = client.getAsync("/get", {}, {}, nullptr, &tok1);
+    auto f2 = client.postAsync("/post", "x", "application/json", {}, nullptr, &tok2);
+
+    auto r1 = f1.get();
+    auto r2 = f2.get();
+    EXPECT_EQ(r1.error, "Cancelled");
+    EXPECT_EQ(r2.error, "Cancelled");
+}
+
+TEST(HttpClientTests, ConnectionPoolCapacityAndPrune) {
+    HttpClient client("http://example.com");
+    ConnectionPoolConfig cfg = client.getConnectionPoolConfig();
+    cfg.maxConnections = 1;
+    cfg.idleTimeout = std::chrono::milliseconds(0);
+    client.setConnectionPoolConfig(cfg);
+
+    auto c1 = HttpClientTestAccessor::GetOrCreate(client, "http://a.com/path1");
+    auto c2 = HttpClientTestAccessor::GetOrCreate(client, "http://b.com/path2");
+
+    // 容量限制为1，第二次应淘汰旧的，只保留1个活跃
+    EXPECT_EQ(client.getActiveConnections(), 1u);
+    EXPECT_NE(c1, c2);
+}
