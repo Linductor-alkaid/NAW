@@ -32,6 +32,8 @@ endif()
 set(SERVICE_UTILS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/HttpClient.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/HttpSerialization.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TokenCounter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TokenUsageClient.cpp
 )
 
 # ============================================================================
@@ -41,6 +43,8 @@ set(SERVICE_UTILS_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpClient.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpSerialization.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/TokenCounter.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/TokenUsageClient.h
 )
 
 # ============================================================================
@@ -95,17 +99,39 @@ if(BUILD_TESTING)
     add_executable(HttpClientTest
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/HttpClientTest.cpp
     )
+    add_executable(TokenCounterTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TokenCounterTest.cpp
+    )
+    add_executable(TokenUsageClientTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TokenUsageClientTest.cpp
+    )
     if(MSVC)
         # 关闭 HttpClientTest 的 LTCG，避免测试注册符号被链接器裁剪
         target_compile_options(HttpClientTest PRIVATE /GL-)
         target_link_options(HttpClientTest PRIVATE /LTCG:OFF /INCREMENTAL)
+        target_compile_options(TokenCounterTest PRIVATE /GL-)
+        target_link_options(TokenCounterTest PRIVATE /LTCG:OFF /INCREMENTAL)
+        target_compile_options(TokenUsageClientTest PRIVATE /GL-)
+        target_link_options(TokenUsageClientTest PRIVATE /LTCG:OFF /INCREMENTAL)
     endif()
     target_link_libraries(HttpClientTest
         PRIVATE
             NAW_ServiceUtils
     )
+    target_link_libraries(TokenCounterTest
+        PRIVATE
+            NAW_ServiceUtils
+    )
+    target_link_libraries(TokenUsageClientTest
+        PRIVATE
+            NAW_ServiceUtils
+    )
     target_include_directories(HttpClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_include_directories(TokenCounterTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_include_directories(TokenUsageClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME HttpClientTest COMMAND HttpClientTest)
+    add_test(NAME TokenCounterTest COMMAND TokenCounterTest)
+    add_test(NAME TokenUsageClientTest COMMAND TokenUsageClientTest)
 endif()
 
 if(BUILD_HTTPCLIENT_EXAMPLE)

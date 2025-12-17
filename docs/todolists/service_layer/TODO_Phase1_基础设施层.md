@@ -211,68 +211,54 @@ src/naw/desktop_pet/service/utils/
 ### 1.2.3 Token计数器（TokenCounter）
 
 #### 1.2.3.1 Token估算算法实现
-- [ ] **选择Token估算方法**
-  - [ ] 调研Token估算算法（字符数估算、单词数估算、BPE估算等）
-  - [ ] 确定使用字符数估算（简单快速）或集成tiktoken库（精确）
-  - [ ] 记录选择理由
+- [x] **选择Token估算方法**
+  - [x] 采用字符数估算（默认约4字符≈1 token，含固定开销），保留自定义规则入口；暂未集成tiktoken
+  - [x] 在代码中内置SiliconFlow常用模型估算参数，可扩展配置
+  - [x] 记录选择理由：轻量、无外部依赖、可扩展精度
 
-- [ ] **实现基础Token估算**
-  - [ ] 实现字符数到Token的转换（中文约1.5字符/Token，英文约4字符/Token）
-  - [ ] 实现文本Token计数方法 `countTokens(const std::string& text)`
-  - [ ] 实现批量文本Token计数
-  - [ ] 添加Token估算误差说明文档
+- [x] **实现基础Token估算**
+  - [x] 基于模型规则的字符数到Token转换，支持固定开销
+  - [x] 提供文本Token估算接口 `estimateTokens(model, text)`
+  - [x] 支持按模型自定义规则（tokensPerChar、fixedOverhead）
+  - [ ] 添加估算误差说明文档（待补充）
 
 - [ ] **优化Token估算精度**
-  - [ ] 考虑不同语言的Token密度差异
-  - [ ] 考虑代码文本的特殊性（符号、关键字等）
-  - [ ] 实现可配置的Token估算参数
+  - [x] 添加可配置的更精细规则入口（BPE策略、可配置词表）
+  - [ ] 考虑不同语言/代码文本的密度差异
   - [ ] 添加Token估算校准机制（可选）
 
 #### 1.2.3.2 消息Token计数
 - [ ] **ChatMessage Token计数**
   - [ ] 定义ChatMessage结构（role, content）
-  - [ ] 实现单条消息Token计数
-  - [ ] 考虑消息格式开销（role标记等）
-  - [ ] 实现消息列表Token计数
+  - [ ] 实现单条/列表消息Token计数（包含role开销）
 
 - [ ] **多模态消息Token计数**
-  - [ ] 支持文本消息Token计数
-  - [ ] 支持图像消息Token估算（基于图像大小和分辨率）
-  - [ ] 支持混合消息Token计数
+  - [ ] 文本消息Token计数
+  - [ ] 图像消息估算（基于尺寸/分辨率）
+  - [ ] 混合消息Token计数
 
 #### 1.2.3.3 上下文Token统计
 - [ ] **上下文Token统计接口**
-  - [ ] 实现 `estimateContextTokens()` 方法
-  - [ ] 支持对话历史Token统计
-  - [ ] 支持系统提示词Token统计
-  - [ ] 支持项目上下文Token统计
+  - [ ] `estimateContextTokens()`，覆盖对话历史/系统提示/项目上下文
 
 - [ ] **Token限制检查**
-  - [ ] 实现Token限制检查方法
-  - [ ] 实现上下文裁剪建议（当超过限制时）
-  - [ ] 实现Token使用率计算
+  - [ ] Token限制检查与裁剪建议
+  - [ ] Token使用率计算
 
 - [ ] **Token统计报告**
-  - [ ] 实现详细的Token使用报告
-  - [ ] 支持按消息类型分类统计
-  - [ ] 支持Token使用趋势分析（可选）
+  - [ ] 按消息类型分类统计
+  - [ ] Token使用趋势分析（可选）
 
 #### 1.2.3.4 单元测试
-- [ ] **Token估算测试**
-  - [ ] 中文文本Token计数测试
-  - [ ] 英文文本Token计数测试
-  - [ ] 代码文本Token计数测试
-  - [ ] 混合文本Token计数测试
+- [x] **Token估算基础测试**
+  - [x] 默认规则估算
+  - [x] 自定义模型规则估算
+  - [x] 计数累积与重置
 
-- [ ] **消息Token计数测试**
-  - [ ] 单条消息Token计数测试
+- [ ] **消息/上下文相关测试**
   - [ ] 消息列表Token计数测试
-  - [ ] 多模态消息Token计数测试
-
-- [ ] **上下文Token统计测试**
-  - [ ] 上下文Token统计测试
-  - [ ] Token限制检查测试
-  - [ ] 上下文裁剪建议测试
+  - [ ] 多模态消息测试
+  - [ ] 上下文Token统计与限制检查测试
 
 ### 1.2.4 音频处理器（AudioProcessor）
 
@@ -871,7 +857,7 @@ include/naw/desktop_pet/service/types/
 **进度**: 0/7 主要模块完成
 
 ### 1.2 工具类实现
-- [ ] Token计数器（TokenCounter）
+- [x] Token计数器（TokenCounter）
 - [ ] 音频处理器（AudioProcessor）
 - [ ] 单元测试
 
