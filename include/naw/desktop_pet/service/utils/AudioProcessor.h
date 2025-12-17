@@ -150,6 +150,7 @@ private:
     bool initialized_{false};
 
     // 录音上下文
+    void* captureContext_{nullptr}; // 实际类型为 ma_context*
     void* captureDevice_{nullptr}; // 实际类型为 ma_device*
     CaptureOptions captureOptions_{};
     mutable std::mutex captureMutex_;
@@ -182,6 +183,11 @@ private:
     std::uint64_t currentBelowFrames_{0};
     float lastDb_{-90.0f};
 
+    // *** VAD 文件管理 - 新增 ***
+    std::atomic<std::uint32_t> vadCaptureCounter_{0};  // VAD 录音计数器
+    std::vector<std::string> vadCapturedFiles_;         // 记录所有生成的 VAD 文件
+    std::mutex vadFilesMutex_;                          // 保护 vadCapturedFiles_
+
     // 内部工具
     ma_format toMiniaudioFormat(AudioFormat fmt) const;
     std::size_t frameSizeBytes(const AudioStreamConfig& cfg) const;
@@ -192,6 +198,19 @@ private:
     void pushRing(const void* pcm, std::size_t bytes);
     void appendCollecting(const void* pcm, std::size_t bytes);
 
+    // *** VAD 文件管理函数 - 新增 ***
+    /**
+     * @brief 清理所有已记录的 VAD 录音文件
+     */
+    void cleanupOldVadFiles();
+    
+    /**
+     * @brief 根据基础路径生成唯一的 VAD 输出文件名（带时间戳和计数器）
+     * @param basePath 基础文件路径（例如 "vad_capture.wav"）
+     * @return 唯一的文件路径（例如 "vad_capture_1703001234567_0.wav"）
+     */
+    std::string generateUniqueVadPath(const std::string& basePath);
+
     // 回调桥接
     static void dataCallbackCapture(void* pUserData,
                                     const void* pInput,
@@ -200,4 +219,3 @@ private:
 };
 
 } // namespace naw::desktop_pet::service::utils
-

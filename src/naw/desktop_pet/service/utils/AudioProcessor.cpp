@@ -4,13 +4,17 @@
 #include <cmath>
 #include <filesystem>
 #include <cstring>
+#include <cctype>
+#include <string>
 #include <miniaudio.h>
 #include <thread>
+#include <iostream>
 
 namespace {
 ma_device* toDevice(void* ptr) { return reinterpret_cast<ma_device*>(ptr); }
 ma_engine* toEngine(void* ptr) { return reinterpret_cast<ma_engine*>(ptr); }
 ma_sound* toSound(void* ptr) { return reinterpret_cast<ma_sound*>(ptr); }
+ma_context* toContext(void* ptr) { return reinterpret_cast<ma_context*>(ptr); }
 
 struct StreamSource {
     ma_data_source_base base{};
@@ -207,10 +211,19 @@ void AudioProcessor::shutdown() {
     if (captureDevice_ != nullptr) {
         stopCapture();
     }
+    
+    // *** 清理 VAD 文件 ***
+    cleanupOldVadFiles();
 
     if (initialized_ && engine_ != nullptr) {
         ma_engine_uninit(toEngine(engine_));
         delete toEngine(engine_);
+    }
+
+    if (captureContext_ != nullptr) {
+        ma_context_uninit(toContext(captureContext_));
+        delete toContext(captureContext_);
+        captureContext_ = nullptr;
     }
 
     engine_ = nullptr;
@@ -554,16 +567,27 @@ void AudioProcessor::onCaptureFrames(const void* pInput, std::uint32_t frameCoun
             }
 
             if (currentBelowFrames_ >= stopHoldFrames_) {
-                // 结束收集，写文件
+                // *** 关键修复：生成唯一文件名 ***
                 AudioStreamConfig stream = captureOptions_.stream;
                 std::vector<std::uint8_t> pcm = std::move(collectingBuffer_);
-                const std::string outPath = vadConfig_.outputWavPath;
+                
+                // 生成唯一的输出路径（带时间戳和计数器）
+                const std::string outPath = generateUniqueVadPath(vadConfig_.outputWavPath);
+                
+                // 记录文件路径以便后续清理
+                {
+                    std::lock_guard<std::mutex> lock(vadFilesMutex_);
+                    vadCapturedFiles_.push_back(outPath);
+                }
+                
+                // 在独立线程中写文件并触发回调
                 std::thread([this, stream, outPath, data = std::move(pcm)]() {
                     writePcmToWav(outPath, stream, data);
                     if (vadCallbacks_.onComplete) {
                         vadCallbacks_.onComplete(outPath);
                     }
                 }).detach();
+                
                 currentBelowFrames_ = 0;
                 currentAboveFrames_ = 0;
                 vadState_ = VADState::Listening;
@@ -573,6 +597,7 @@ void AudioProcessor::onCaptureFrames(const void* pInput, std::uint32_t frameCoun
         return;
     }
 
+    // 非 VAD 模式：普通录音
     if (captureOptions_.storeInMemory) {
         std::lock_guard<std::mutex> lock(captureMutex_);
         const auto currentFrames = captureBuffer_.size() / bytesPerFrame;
@@ -596,6 +621,17 @@ bool AudioProcessor::startCapture(const CaptureOptions& opts) {
         return true;
     }
 
+    // 确保存在用于枚举输入设备的上下文
+    if (captureContext_ == nullptr) {
+        auto* ctx = new ma_context();
+        if (ma_context_init(nullptr, 0, nullptr, ctx) != MA_SUCCESS) {
+            delete ctx;
+            return false;
+        }
+        captureContext_ = ctx;
+    }
+    auto* ctx = toContext(captureContext_);
+
     ma_device_config deviceConfig = ma_device_config_init(ma_device_type_capture);
     bool useDefault = opts.useDeviceDefault;
     deviceConfig.sampleRate = useDefault ? 0 : opts.stream.sampleRate;
@@ -608,9 +644,36 @@ bool AudioProcessor::startCapture(const CaptureOptions& opts) {
     const std::uint32_t period = opts.stream.periodSizeInFrames == 0 ? 2048 : opts.stream.periodSizeInFrames;
     deviceConfig.periodSizeInFrames = period;
 
+    // 如果默认输入是 loopback（扬声器），尝试选第一个非 loopback 设备，避免把播放声当作输入
+    ma_device_info* playbackInfos = nullptr;
+    ma_uint32 playbackCount = 0;
+    ma_device_info* captureInfos = nullptr;
+    ma_uint32 captureCount = 0;
+    if (ma_context_get_devices(ctx, &playbackInfos, &playbackCount, &captureInfos, &captureCount) == MA_SUCCESS &&
+        captureInfos != nullptr && captureCount > 0) {
+        const ma_device_info* chosen = &captureInfos[0]; // 默认设备
+        auto isLoopbackName = [](const ma_device_info& info) {
+            std::string name(info.name);
+            std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            return name.find("loopback") != std::string::npos;
+        };
+        if (isLoopbackName(*chosen)) {
+            for (ma_uint32 i = 0; i < captureCount; ++i) {
+                if (!isLoopbackName(captureInfos[i])) {
+                    chosen = &captureInfos[i];
+                    break;
+                }
+            }
+        }
+        deviceConfig.capture.pDeviceID = &chosen->id;
+    }
+
     auto* device = new ma_device();
-    if (ma_device_init(nullptr, &deviceConfig, device) != MA_SUCCESS) {
+    if (ma_device_init(ctx, &deviceConfig, device) != MA_SUCCESS) {
         delete device;
+        ma_context_uninit(ctx);
+        delete ctx;
+        captureContext_ = nullptr;
         return false;
     }
 
@@ -649,6 +712,12 @@ void AudioProcessor::stopCapture() {
     delete device;
     captureDevice_ = nullptr;
     capturing_ = false;
+
+    if (captureContext_ != nullptr) {
+        ma_context_uninit(toContext(captureContext_));
+        delete toContext(captureContext_);
+        captureContext_ = nullptr;
+    }
 }
 
 CapturedBuffer AudioProcessor::capturedBuffer() const {
@@ -823,12 +892,16 @@ void AudioProcessor::appendCollecting(const void* pcm, std::size_t bytes) {
 }
 
 bool AudioProcessor::startPassiveListening(const VADConfig& vadCfg,
-                                           const CaptureOptions& baseCapture,
-                                           const VADCallbacks& cbs) {
+    const CaptureOptions& baseCapture,
+    const VADCallbacks& cbs) {
     stopPassiveListening();
+
+    // *** 清理之前的录音文件 ***
+    cleanupOldVadFiles();
+
     VADConfig cfg = vadCfg;
     if (cfg.stopThresholdDb > cfg.startThresholdDb) {
-        cfg.stopThresholdDb = cfg.startThresholdDb - 5.0f;
+    cfg.stopThresholdDb = cfg.startThresholdDb - 5.0f;
     }
     vadConfig_ = cfg;
     vadCallbacks_ = cbs;
@@ -843,7 +916,7 @@ bool AudioProcessor::startPassiveListening(const VADConfig& vadCfg,
     opts.onData = nullptr;
 
     if (!startCapture(opts)) {
-        return false;
+    return false;
     }
 
     const auto bytesPerFrame = frameSizeBytes(captureOptions_.stream);
@@ -873,6 +946,54 @@ void AudioProcessor::stopPassiveListening() {
     currentAboveFrames_ = 0;
     currentBelowFrames_ = 0;
     stopCapture();
+    
+    // *** 停止时清理所有录音文件 ***
+    cleanupOldVadFiles();
+}
+
+void AudioProcessor::cleanupOldVadFiles() {
+    std::lock_guard<std::mutex> lock(vadFilesMutex_);
+    
+    for (const auto& path : vadCapturedFiles_) {
+        try {
+            if (std::filesystem::exists(path)) {
+                std::filesystem::remove(path);
+                std::cout << "[VAD] Cleaned up: " << path << "\n";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[VAD] Failed to delete " << path << ": " << e.what() << "\n";
+        }
+    }
+    
+    vadCapturedFiles_.clear();
+}
+
+std::string AudioProcessor::generateUniqueVadPath(const std::string& basePath) {
+    // 获取当前时间戳（毫秒）
+    auto now = std::chrono::system_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(
+        now.time_since_epoch()).count();
+    
+    // 获取递增的计数器
+    uint32_t captureId = vadCaptureCounter_.fetch_add(1, std::memory_order_relaxed);
+    
+    // 构建唯一文件名
+    std::string outPath = basePath;
+    size_t dotPos = outPath.find_last_of('.');
+    
+    if (dotPos != std::string::npos) {
+        // 有扩展名：在扩展名前插入时间戳和计数器
+        // 例如：vad_capture.wav -> vad_capture_1703001234567_0.wav
+        outPath = outPath.substr(0, dotPos) + "_" + 
+                  std::to_string(timestamp) + "_" +
+                  std::to_string(captureId) + 
+                  outPath.substr(dotPos);
+    } else {
+        // 无扩展名：直接追加
+        outPath += "_" + std::to_string(timestamp) + "_" + std::to_string(captureId);
+    }
+    
+    return outPath;
 }
 
 } // namespace naw::desktop_pet::service::utils
