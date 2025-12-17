@@ -133,6 +133,21 @@ public:
                     const std::string& body = "",
                     const std::string& contentType = "application/json",
                     const std::map<std::string, std::string>& headers = {});
+
+    /**
+     * @brief PATCH请求
+     */
+    HttpResponse patch(const std::string& path,
+                      const std::string& body = "",
+                      const std::string& contentType = "application/json",
+                      const std::map<std::string, std::string>& headers = {});
+
+    /**
+     * @brief 表单POST（application/x-www-form-urlencoded）
+     */
+    HttpResponse postForm(const std::string& path,
+                         const std::map<std::string, std::string>& formFields,
+                         const std::map<std::string, std::string>& headers = {});
     
     /**
      * @brief DELETE请求
@@ -246,6 +261,7 @@ private:
     bool m_stopWorkers{false};
     size_t m_threadCount{0};
     RetryStats m_retryStats;
+    bool m_enableHealthCheck{false};
 
     std::future<HttpResponse> submitAsyncTask(std::function<HttpResponse()> task);
     void startWorkers(size_t threadCount);

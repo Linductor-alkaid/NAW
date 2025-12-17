@@ -219,6 +219,37 @@ std::future<HttpResponse> HttpClient::executeAsync(const HttpRequest& request) {
     });
 }
 
+HttpResponse HttpClient::patch(const std::string& path,
+                              const std::string& body,
+                              const std::string& contentType,
+                              const std::map<std::string, std::string>& headers) {
+    HttpRequest request;
+    request.method = HttpMethod::PATCH;
+    request.url = buildFullUrl(path);
+    request.body = body;
+    request.timeoutMs = m_timeoutMs;
+    request.followRedirects = m_followRedirects;
+
+    auto mergedHeaders = mergeHeaders(headers);
+    mergedHeaders["Content-Type"] = contentType;
+    request.headers = std::move(mergedHeaders);
+
+    return execute(request);
+}
+
+HttpResponse HttpClient::postForm(const std::string& path,
+                                 const std::map<std::string, std::string>& formFields,
+                                 const std::map<std::string, std::string>& headers) {
+    std::ostringstream bodyStream;
+    bool first = true;
+    for (const auto& [k, v] : formFields) {
+        if (!first) bodyStream << "&";
+        first = false;
+        bodyStream << k << "=" << v; // 简化：未进行URL编码，可按需扩展
+    }
+    return post(path, bodyStream.str(), "application/x-www-form-urlencoded", headers);
+}
+
 // ========== 私有方法 ==========
 
 std::shared_ptr<httplib::Client> HttpClient::getOrCreateClient(const std::string& url) {
@@ -327,6 +358,11 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
             headers.emplace(key, value);
         }
         
+        // 可选健康检查（轻量占位）
+        if (m_enableHealthCheck) {
+            client->set_keep_alive(true);
+        }
+
         // 执行请求
         httplib::Result result;
         std::string fullUrl = request.buildUrl();

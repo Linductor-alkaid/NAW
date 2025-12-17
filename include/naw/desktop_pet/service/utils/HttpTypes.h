@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <functional>
 #include <atomic>
 
 #ifdef DELETE
@@ -175,6 +176,10 @@ struct RetryConfig {
     bool enableJitter = true;                         // 是否启用随机抖动
     bool retryOnRateLimit = true;                     // 是否对429重试
     bool retryOnServerError = true;                   // 是否对5xx重试
+    // 可选自定义退避回调：入参 attempt，返回延迟；如返回 <0 则使用默认
+    std::function<std::chrono::milliseconds(int)> customBackoff;
+    // 可选重试日志回调：入参 attempt、HttpResponse
+    std::function<void(int, const HttpResponse&)> retryLogger;
     
     /**
      * @brief 计算重试延迟

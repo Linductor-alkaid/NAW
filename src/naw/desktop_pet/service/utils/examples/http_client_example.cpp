@@ -24,6 +24,12 @@ int main() {
     std::cout << "[Async POST] status=" << postResp.statusCode
               << " error=" << postResp.error << "\n";
 
+    // 表单 POST
+    std::map<std::string, std::string> formFields{{"foo", "bar"}, {"lang", "cpp"}};
+    auto formResp = client.postForm("/post", formFields);
+    std::cout << "[Form POST] status=" << formResp.statusCode
+              << " error=" << formResp.error << "\n";
+
     // 统计
     std::cout << "Active connections: " << client.getActiveConnections() << "\n";
     std::cout << "Total connections: " << client.getTotalConnections() << "\n";
