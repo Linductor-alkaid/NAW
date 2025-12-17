@@ -44,6 +44,20 @@ struct CapturedBuffer {
     std::vector<std::uint8_t> data;
 };
 
+struct VADConfig {
+    float startThresholdDb{-35.0f}; // 触发开始的能量阈值
+    float stopThresholdDb{-40.0f};  // 结束的能量阈值（应低于 start）
+    std::uint32_t startHoldMs{200}; // 超过阈值需持续多久才触发
+    std::uint32_t stopHoldMs{600};  // 低于阈值需持续多久才结束
+    float maxBufferSeconds{10.0f};  // 环形缓冲秒数上限
+    std::string outputWavPath{"vad_capture.wav"}; // 默认输出文件
+};
+
+struct VADCallbacks {
+    std::function<void()> onTrigger;                             // 触发开始收集时
+    std::function<void(const std::string& wavPath)> onComplete;  // 收集完成并写文件后
+};
+
 /**
  * @brief 基于 miniaudio 的轻量音频处理器
  * - 支持文件/内存播放：播放、暂停、恢复、停止、seek、音量调节、循环
@@ -87,6 +101,13 @@ public:
                        const AudioStreamConfig& stream,
                        const std::vector<std::uint8_t>& pcm) const;
 
+    // ---- 静默监听/VAD ----
+    bool startPassiveListening(const VADConfig& vadCfg,
+                               const CaptureOptions& baseCapture,
+                               const VADCallbacks& cbs = {});
+    void stopPassiveListening();
+    bool isPassiveListening() const { return passiveListening_; }
+
 private:
     struct SoundHandle {
         void* sound{nullptr};   // 实际类型为 ma_sound*
@@ -111,11 +132,41 @@ private:
     std::vector<std::uint8_t> captureBuffer_;
     bool capturing_{false};
 
+    // VAD/环形缓冲
+    struct RingBuffer {
+        std::vector<std::uint8_t> data;
+        std::size_t writePos{0};
+        std::size_t sizeBytes{0};
+        std::size_t capacityBytes{0};
+    };
+
+    enum class VADState {
+        Idle,
+        Listening,
+        Collecting,
+    };
+
+    VADState vadState_{VADState::Idle};
+    VADConfig vadConfig_{};
+    VADCallbacks vadCallbacks_{};
+    RingBuffer ring_;
+    std::vector<std::uint8_t> collectingBuffer_;
+    std::atomic<bool> passiveListening_{false};
+    std::uint64_t startHoldFrames_{0};
+    std::uint64_t stopHoldFrames_{0};
+    std::uint64_t currentAboveFrames_{0};
+    std::uint64_t currentBelowFrames_{0};
+    float lastDb_{-90.0f};
+
     // 内部工具
     ma_format toMiniaudioFormat(AudioFormat fmt) const;
     std::size_t frameSizeBytes(const AudioStreamConfig& cfg) const;
     bool addSoundHandle(std::uint32_t id, void* sound);
     void removeSoundHandle(std::uint32_t id);
+    float computeDb(const void* pcm, std::uint32_t frames) const;
+    void ensureRingCapacity(std::size_t bytes, std::size_t bytesPerFrame);
+    void pushRing(const void* pcm, std::size_t bytes);
+    void appendCollecting(const void* pcm, std::size_t bytes);
 
     // 回调桥接
     static void dataCallbackCapture(void* pUserData,

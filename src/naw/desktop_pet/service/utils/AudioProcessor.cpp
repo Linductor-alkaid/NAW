@@ -1,8 +1,10 @@
 #include "naw/desktop_pet/service/utils/AudioProcessor.h"
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <miniaudio.h>
+#include <thread>
 
 namespace {
 ma_device* toDevice(void* ptr) { return reinterpret_cast<ma_device*>(ptr); }
@@ -29,6 +31,13 @@ ma_format AudioProcessor::toMiniaudioFormat(AudioFormat fmt) const {
 
 static AudioFormat fromMiniaudioFormat(ma_format fmt) {
     return fmt == ma_format_s16 ? AudioFormat::S16 : AudioFormat::F32;
+}
+
+static float dbfsFromRms(float rms) {
+    if (rms <= 1e-9f) {
+        return -90.0f;
+    }
+    return 20.0f * std::log10(rms);
 }
 
 std::size_t AudioProcessor::frameSizeBytes(const AudioStreamConfig& cfg) const {
@@ -250,6 +259,93 @@ void AudioProcessor::onCaptureFrames(const void* pInput, std::uint32_t frameCoun
     const auto bytesPerFrame = frameSizeBytes(captureOptions_.stream);
     const auto bytesToCopy = static_cast<std::size_t>(frameCount) * bytesPerFrame;
 
+    if (passiveListening_) {
+        // VAD 模式：写环形缓冲，做能量检测和状态机
+        const float db = computeDb(pInput, frameCount);
+        lastDb_ = db;
+        pushRing(pInput, bytesToCopy);
+
+        // 状态机
+        if (vadState_ == VADState::Listening) {
+            if (db >= vadConfig_.startThresholdDb) {
+                currentAboveFrames_ += frameCount;
+                currentBelowFrames_ = 0;
+                if (currentAboveFrames_ >= startHoldFrames_) {
+                    // 触发收集
+                    vadState_ = VADState::Collecting;
+                    collectingBuffer_.clear();
+                    // 预留近 maxBufferSeconds 的内容
+                    const auto ringBytes = ring_.sizeBytes;
+                    collectingBuffer_.reserve(ringBytes + bytesToCopy * 2);
+
+                    // 复制环形缓冲中的历史数据
+                    if (ringBytes > 0) {
+                        const std::size_t cap = ring_.capacityBytes;
+                        const std::size_t start = (ring_.writePos + cap - ring_.sizeBytes) % cap;
+                        if (start + ring_.sizeBytes <= cap) {
+                            collectingBuffer_.insert(collectingBuffer_.end(),
+                                                     ring_.data.begin() + start,
+                                                     ring_.data.begin() + start + ring_.sizeBytes);
+                        } else {
+                            const std::size_t first = cap - start;
+                            collectingBuffer_.insert(collectingBuffer_.end(),
+                                                     ring_.data.begin() + start,
+                                                     ring_.data.end());
+                            collectingBuffer_.insert(collectingBuffer_.end(),
+                                                     ring_.data.begin(),
+                                                     ring_.data.begin() + (ring_.sizeBytes - first));
+                        }
+                    }
+
+                    // 本帧追加
+                    collectingBuffer_.insert(collectingBuffer_.end(),
+                                             static_cast<const std::uint8_t*>(pInput),
+                                             static_cast<const std::uint8_t*>(pInput) + bytesToCopy);
+
+                    if (vadCallbacks_.onTrigger) {
+                        vadCallbacks_.onTrigger();
+                    }
+                    currentAboveFrames_ = 0;
+                    currentBelowFrames_ = 0;
+                }
+            } else {
+                currentAboveFrames_ = 0;
+            }
+            return;
+        }
+
+        if (vadState_ == VADState::Collecting) {
+            // 收集中：持续写入
+            collectingBuffer_.insert(collectingBuffer_.end(),
+                                     static_cast<const std::uint8_t*>(pInput),
+                                     static_cast<const std::uint8_t*>(pInput) + bytesToCopy);
+
+            if (db <= vadConfig_.stopThresholdDb) {
+                currentBelowFrames_ += frameCount;
+            } else {
+                currentBelowFrames_ = 0;
+            }
+
+            if (currentBelowFrames_ >= stopHoldFrames_) {
+                // 结束收集，写文件
+                AudioStreamConfig stream = captureOptions_.stream;
+                std::vector<std::uint8_t> pcm = std::move(collectingBuffer_);
+                const std::string outPath = vadConfig_.outputWavPath;
+                std::thread([this, stream, outPath, data = std::move(pcm)]() {
+                    writePcmToWav(outPath, stream, data);
+                    if (vadCallbacks_.onComplete) {
+                        vadCallbacks_.onComplete(outPath);
+                    }
+                }).detach();
+                currentBelowFrames_ = 0;
+                currentAboveFrames_ = 0;
+                vadState_ = VADState::Listening;
+            }
+            return;
+        }
+        return;
+    }
+
     if (captureOptions_.storeInMemory) {
         std::lock_guard<std::mutex> lock(captureMutex_);
         const auto currentFrames = captureBuffer_.size() / bytesPerFrame;
@@ -436,6 +532,120 @@ bool AudioProcessor::writePcmToWav(const std::string& path,
     const auto result = ma_encoder_write_pcm_frames(&encoder, pcm.data(), frames, &framesWritten);
     ma_encoder_uninit(&encoder);
     return result == MA_SUCCESS && framesWritten == frames;
+}
+
+float AudioProcessor::computeDb(const void* pcm, std::uint32_t frames) const {
+    if (pcm == nullptr || frames == 0) {
+        return -90.0f;
+    }
+
+    const auto fmt = captureOptions_.stream.format;
+    const auto channels = captureOptions_.stream.channels;
+    const auto samples = static_cast<std::size_t>(frames) * channels;
+
+    double accum = 0.0;
+
+    if (fmt == AudioFormat::S16) {
+        const auto* p = static_cast<const std::int16_t*>(pcm);
+        for (std::size_t i = 0; i < samples; ++i) {
+            const float v = static_cast<float>(p[i]) / 32768.0f;
+            accum += v * v;
+        }
+    } else {
+        const auto* p = static_cast<const float*>(pcm);
+        for (std::size_t i = 0; i < samples; ++i) {
+            const float v = p[i];
+            accum += v * v;
+        }
+    }
+
+    const double rms = std::sqrt(accum / static_cast<double>(samples));
+    return dbfsFromRms(static_cast<float>(rms));
+}
+
+void AudioProcessor::ensureRingCapacity(std::size_t bytes, std::size_t bytesPerFrame) {
+    const std::uint32_t sr = captureOptions_.stream.sampleRate == 0 ? 48000u : captureOptions_.stream.sampleRate;
+    const std::size_t target = bytesPerFrame * static_cast<std::size_t>(vadConfig_.maxBufferSeconds * sr + 0.5);
+    const std::size_t cap = std::max<std::size_t>(bytes, target);
+    ring_.data.assign(cap, 0);
+    ring_.capacityBytes = cap;
+    ring_.sizeBytes = 0;
+    ring_.writePos = 0;
+}
+
+void AudioProcessor::pushRing(const void* pcm, std::size_t bytes) {
+    if (ring_.capacityBytes == 0) {
+        return;
+    }
+    const auto* src = static_cast<const std::uint8_t*>(pcm);
+    std::size_t remaining = bytes;
+    while (remaining > 0) {
+        const std::size_t space = ring_.capacityBytes - ring_.writePos;
+        const std::size_t chunk = std::min(space, remaining);
+        std::copy(src, src + chunk, ring_.data.begin() + ring_.writePos);
+        ring_.writePos = (ring_.writePos + chunk) % ring_.capacityBytes;
+        src += chunk;
+        remaining -= chunk;
+        ring_.sizeBytes = std::min(ring_.sizeBytes + chunk, ring_.capacityBytes);
+    }
+}
+
+void AudioProcessor::appendCollecting(const void* pcm, std::size_t bytes) {
+    const auto* src = static_cast<const std::uint8_t*>(pcm);
+    collectingBuffer_.insert(collectingBuffer_.end(), src, src + bytes);
+}
+
+bool AudioProcessor::startPassiveListening(const VADConfig& vadCfg,
+                                           const CaptureOptions& baseCapture,
+                                           const VADCallbacks& cbs) {
+    stopPassiveListening();
+    VADConfig cfg = vadCfg;
+    if (cfg.stopThresholdDb > cfg.startThresholdDb) {
+        cfg.stopThresholdDb = cfg.startThresholdDb - 5.0f;
+    }
+    vadConfig_ = cfg;
+    vadCallbacks_ = cbs;
+    collectingBuffer_.clear();
+    currentAboveFrames_ = 0;
+    currentBelowFrames_ = 0;
+    lastDb_ = -90.0f;
+    vadState_ = VADState::Idle;
+
+    CaptureOptions opts = baseCapture;
+    opts.storeInMemory = false;
+    opts.onData = nullptr;
+
+    if (!startCapture(opts)) {
+        return false;
+    }
+
+    const auto bytesPerFrame = frameSizeBytes(captureOptions_.stream);
+    const std::size_t minBytes = static_cast<std::size_t>(captureOptions_.stream.sampleRate * bytesPerFrame);
+    ensureRingCapacity(minBytes, bytesPerFrame);
+
+    const double sr = captureOptions_.stream.sampleRate == 0 ? 48000.0 : static_cast<double>(captureOptions_.stream.sampleRate);
+    startHoldFrames_ = static_cast<std::uint64_t>((static_cast<double>(vadConfig_.startHoldMs) / 1000.0) * sr);
+    stopHoldFrames_ = static_cast<std::uint64_t>((static_cast<double>(vadConfig_.stopHoldMs) / 1000.0) * sr);
+
+    vadState_ = VADState::Listening;
+    passiveListening_.store(true);
+    return true;
+}
+
+void AudioProcessor::stopPassiveListening() {
+    if (!passiveListening_) {
+        return;
+    }
+    passiveListening_.store(false);
+    vadState_ = VADState::Idle;
+    collectingBuffer_.clear();
+    ring_.data.clear();
+    ring_.capacityBytes = 0;
+    ring_.sizeBytes = 0;
+    ring_.writePos = 0;
+    currentAboveFrames_ = 0;
+    currentBelowFrames_ = 0;
+    stopCapture();
 }
 
 } // namespace naw::desktop_pet::service::utils

@@ -50,6 +50,7 @@ logs/
 *.temp
 *.bak
 *.cache
+*.wav
 
 # 调试文件
 *.pdb
