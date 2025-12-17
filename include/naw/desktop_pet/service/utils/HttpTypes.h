@@ -10,6 +10,8 @@
 #include <string>
 #include <functional>
 #include <atomic>
+#include <vector>
+#include <sstream>
 
 #ifdef DELETE
 #undef DELETE
@@ -76,11 +78,102 @@ struct HttpRequest {
 };
 
 /**
+ * @brief HTTP错误/状态分类
+ */
+enum class HttpErrorType {
+    None,
+    Network,       // statusCode == 0 or transport error
+    Timeout,       // 408 or超时
+    RateLimit,     // 429
+    Client,        // 4xx
+    Server,        // 5xx
+    Unknown
+};
+
+struct HttpHeaders {
+    // 小写键 -> 多值列表（按插入顺序保留）
+    std::map<std::string, std::vector<std::string>> entries;
+
+    static std::string toLower(const std::string& s) {
+        std::string out = s;
+        std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c){ return std::tolower(c); });
+        return out;
+    }
+
+    static HttpHeaders parseRaw(const std::string& raw) {
+        HttpHeaders h;
+        std::istringstream iss(raw);
+        std::string line;
+        while (std::getline(iss, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            auto pos = line.find(':');
+            if (pos == std::string::npos) continue;
+            std::string key = line.substr(0, pos);
+            std::string val = line.substr(pos + 1);
+            auto trim = [](std::string& s) {
+                auto notSpace = [](int ch) { return !std::isspace(ch); };
+                s.erase(s.begin(), std::find_if(s.begin(), s.end(), notSpace));
+                s.erase(std::find_if(s.rbegin(), s.rend(), notSpace).base(), s.end());
+            };
+            trim(key); trim(val);
+            if (key.empty()) continue;
+            auto lk = toLower(key);
+            h.entries[lk].push_back(val);
+        }
+        return h;
+    }
+
+    void add(const std::string& key, const std::string& value) {
+        entries[toLower(key)].push_back(value);
+    }
+
+    bool has(const std::string& key) const {
+        return entries.find(toLower(key)) != entries.end();
+    }
+
+    std::vector<std::string> getAll(const std::string& key) const {
+        auto it = entries.find(toLower(key));
+        if (it == entries.end()) return {};
+        return it->second;
+    }
+
+    std::optional<std::string> getFirst(const std::string& key) const {
+        auto vals = getAll(key);
+        if (vals.empty()) return std::nullopt;
+        return vals.front();
+    }
+
+    std::optional<std::string> contentType() const {
+        return getFirst("content-type");
+    }
+
+    std::optional<long long> contentLength() const {
+        auto v = getFirst("content-length");
+        if (!v) return std::nullopt;
+        try {
+            return std::stoll(*v);
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
+    std::map<std::string, std::string> toFirstValueMap() const {
+        std::map<std::string, std::string> m;
+        for (const auto& [k, vals] : entries) {
+            if (!vals.empty()) m[k] = vals.front();
+        }
+        return m;
+    }
+};
+
+/**
  * @brief HTTP响应结构
  */
 struct HttpResponse {
     int statusCode = 0;
-    std::map<std::string, std::string> headers;
+    std::map<std::string, std::string> headers; // 首值映射，兼容旧接口
+    HttpHeaders multiHeaders; // 多值头
     std::string body;
     std::string error;  // 错误信息（如果有）
     
@@ -106,27 +199,23 @@ struct HttpResponse {
     }
     
     /**
-     * @brief 获取响应头
+     * @brief 获取响应头（首值，不区分大小写）
      */
     std::optional<std::string> getHeader(const std::string& key) const {
-        // 不区分大小写查找
-        for (const auto& [k, v] : headers) {
-            if (k.size() == key.size() && 
-                std::equal(k.begin(), k.end(), key.begin(), 
-                          [](char a, char b) { 
-                              return std::tolower(a) == std::tolower(b); 
-                          })) {
-                return v;
-            }
+        auto lk = HttpHeaders::toLower(key);
+        auto it = headers.find(lk);
+        if (it != headers.end()) {
+            return it->second;
         }
-        return std::nullopt;
+        // 回退多值表的首值
+        return multiHeaders.getFirst(key);
     }
     
     /**
      * @brief 获取Content-Type
      */
     std::optional<std::string> getContentType() const {
-        return getHeader("Content-Type");
+        return multiHeaders.contentType();
     }
     
     /**
@@ -140,19 +229,6 @@ struct HttpResponse {
         const std::string& ct = contentType.value();
         return ct.find("application/json") != std::string::npos;
     }
-};
-
-/**
- * @brief HTTP错误/状态分类
- */
-enum class HttpErrorType {
-    None,
-    Network,       // statusCode == 0 or transport error
-    Timeout,       // 408 or超时
-    RateLimit,     // 429
-    Client,        // 4xx
-    Server,        // 5xx
-    Unknown
 };
 
 /**

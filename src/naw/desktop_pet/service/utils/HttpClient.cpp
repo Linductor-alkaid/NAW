@@ -530,10 +530,13 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
             response.statusCode = result->status;
             response.body = result->body;
             
-            // 复制响应头
+            // 复制响应头（多值）
+            HttpHeaders multi;
             for (const auto& [key, value] : result->headers) {
-                response.headers[key] = value;
+                multi.add(key, value);
             }
+            response.headers = multi.toFirstValueMap();
+            response.multiHeaders = std::move(multi);
         } else {
             response.statusCode = 0;
             response.error = "Request failed: error_code=" +

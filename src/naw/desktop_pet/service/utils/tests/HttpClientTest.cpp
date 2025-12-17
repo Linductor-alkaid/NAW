@@ -36,6 +36,12 @@ public:
 } // namespace naw::desktop_pet::service::utils
 
 using namespace naw::desktop_pet::service::utils;
+namespace naw::desktop_pet::service::utils {
+class HttpHeadersTestAccessor {
+public:
+    static HttpHeaders parse(const std::string& raw) { return HttpHeaders::parseRaw(raw); }
+};
+} // namespace naw::desktop_pet::service::utils
 
 TEST(HttpClientTests, RetryClassification) {
     HttpClient client("https://example.com");
@@ -122,6 +128,25 @@ TEST(HttpClientTests, HeaderValidationRejectsControlChars) {
     auto resp = HttpClientTestAccessor::ExecOnce(client, req);
     EXPECT_EQ(resp.statusCode, 400);
     EXPECT_FALSE(resp.error.empty());
+}
+
+TEST(HttpClientTests, RawHeadersParseMultiValues) {
+    std::string raw =
+        "Content-Type: application/json\r\n"
+        "Set-Cookie: a=1\r\n"
+        "Set-Cookie: b=2\r\n"
+        "X-Test: v1\r\n"
+        "x-test: v2\r\n";
+    auto h = HttpHeadersTestAccessor::parse(raw);
+    auto cookies = h.getAll("Set-Cookie");
+    EXPECT_EQ(cookies.size(), 2u);
+    EXPECT_EQ(cookies[0], "a=1");
+    EXPECT_EQ(cookies[1], "b=2");
+    auto xtest = h.getAll("X-Test");
+    EXPECT_EQ(xtest.size(), 2u);
+    EXPECT_EQ(h.getFirst("Content-Type").value_or(""), "application/json");
+    auto ctLen = h.contentLength();
+    EXPECT_FALSE(ctLen.has_value());
 }
 
 TEST(HttpClientTests, MultipartBuildsBoundaryAndRejectsCtrl) {

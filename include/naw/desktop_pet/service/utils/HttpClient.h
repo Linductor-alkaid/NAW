@@ -227,6 +227,7 @@ public:
 
     // 测试辅助访问（gtest友元）
     friend class HttpClientTestAccessor;
+    friend class HttpHeadersTestAccessor;
 
 private:
     /**

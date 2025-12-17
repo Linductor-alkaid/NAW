@@ -103,6 +103,11 @@ if(BUILD_TESTING)
     add_executable(HttpClientTest
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/HttpClientTest.cpp
     )
+    if(MSVC)
+        # 关闭 HttpClientTest 的 LTCG，避免测试注册符号被链接器裁剪
+        target_compile_options(HttpClientTest PRIVATE /GL-)
+        target_link_options(HttpClientTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
     target_link_libraries(HttpClientTest
         PRIVATE
             NAW_ServiceUtils
