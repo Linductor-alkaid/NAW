@@ -1,9 +1,17 @@
 #pragma once
 
-#include <string>
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <map>
 #include <optional>
-#include <chrono>
+#include <string>
+
+#ifdef DELETE
+#undef DELETE
+#endif
 
 namespace naw::desktop_pet::service::utils {
 
@@ -158,25 +166,21 @@ struct RetryConfig {
      * @return 延迟时间（毫秒）
      */
     std::chrono::milliseconds getRetryDelay(int attempt) const {
-        auto delay = std::chrono::duration_cast<std::chrono::milliseconds>(
-            initialDelay * std::pow(backoffMultiplier, attempt)
-        );
-        
-        // 限制最大延迟
-        if (delay > maxDelay) {
-            delay = maxDelay;
-        }
-        
-        // 添加随机抖动（±20%）
+        const double scaled = static_cast<double>(initialDelay.count()) *
+                              std::pow(backoffMultiplier, attempt);
+        const auto clamped = std::min(scaled,
+                                      static_cast<double>(maxDelay.count()));
+
+        double withJitter = clamped;
         if (enableJitter) {
-            auto jitter = delay * 0.2;
-            auto randomFactor = (std::rand() % 200 - 100) / 100.0;  // -1.0 到 1.0
-            delay += std::chrono::duration_cast<std::chrono::milliseconds>(
-                jitter * randomFactor
-            );
+            const double jitterRange = clamped * 0.2;  // ±20%
+            const double randomFactor = (std::rand() % 200 - 100) / 100.0; // -1..1
+            withJitter += jitterRange * randomFactor;
         }
-        
-        return delay;
+
+        const auto millis =
+            static_cast<std::chrono::milliseconds::rep>(std::max(0.0, withJitter));
+        return std::chrono::milliseconds{millis};
     }
 };
 

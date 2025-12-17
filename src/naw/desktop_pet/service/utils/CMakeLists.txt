@@ -2,6 +2,28 @@
 # HTTP客户端工具模块
 
 # ============================================================================
+# 依赖：cpp-httplib
+#  - 优先使用 third_party/cpp-httplib/httplib.h
+#  - 若不存在，则通过 FetchContent 拉取
+# ============================================================================
+set(LOCAL_HTTPLIB_DIR ${CMAKE_SOURCE_DIR}/third_party/cpp-httplib)
+
+if(EXISTS ${LOCAL_HTTPLIB_DIR}/httplib.h)
+    message(STATUS "Using bundled cpp-httplib from ${LOCAL_HTTPLIB_DIR}")
+    set(HTTPLIB_INCLUDE_DIR ${LOCAL_HTTPLIB_DIR})
+else()
+    message(STATUS "cpp-httplib not found locally, fetching via FetchContent")
+    include(FetchContent)
+    FetchContent_Declare(
+        cpp_httplib
+        GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
+        GIT_TAG v0.15.3
+    )
+    FetchContent_MakeAvailable(cpp_httplib)
+    set(HTTPLIB_INCLUDE_DIR ${cpp_httplib_SOURCE_DIR})
+endif()
+
+# ============================================================================
 # 源文件列表
 # ============================================================================
 set(SERVICE_UTILS_SOURCES
@@ -30,7 +52,7 @@ add_library(NAW_ServiceUtils STATIC
 target_include_directories(NAW_ServiceUtils
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
-        ${CMAKE_SOURCE_DIR}/third_party/cpp-httplib
+        ${HTTPLIB_INCLUDE_DIR}
 )
 
 # ============================================================================
@@ -39,6 +61,7 @@ target_include_directories(NAW_ServiceUtils
 target_compile_options(NAW_ServiceUtils
     PRIVATE
         ${PROJECT_COMPILE_OPTIONS}
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
 )
 
 # ============================================================================

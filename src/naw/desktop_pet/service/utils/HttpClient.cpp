@@ -6,13 +6,18 @@
 // #define CPPHTTPLIB_OPENSSL_SUPPORT
 #include "httplib.h"
 
+#include <chrono>
+#include <future>
+#include <iomanip>
 #include <sstream>
 #include <thread>
-#include <chrono>
-#include <random>
-#include <algorithm>
 #include <cctype>
-#include <cmath>
+#include <utility>
+
+// Windows 平台可能在系统头中定义 DELETE 宏，会与 HttpMethod::DELETE 冲突
+#ifdef DELETE
+#undef DELETE
+#endif
 
 namespace naw::desktop_pet::service::utils {
 
@@ -31,15 +36,20 @@ std::string HttpRequest::buildUrl() const {
         oss << (first ? "?" : "&");
         first = false;
         
-        // URL编码（简化版本）
+        // URL编码：按UTF-8字节百分号转义，仅保留RFC3986未保留字符
         auto encode = [](const std::string& str) -> std::string {
+            auto isUnreserved = [](unsigned char c) {
+                return std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~';
+            };
+
             std::ostringstream encoded;
+            encoded << std::uppercase << std::hex << std::setfill('0');
+
             for (unsigned char c : str) {
-                if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-                    encoded << c;
+                if (isUnreserved(c)) {
+                    encoded << static_cast<char>(c);
                 } else {
-                    encoded << '%' << std::hex << std::uppercase 
-                            << static_cast<int>(c) << std::dec;
+                    encoded << '%' << std::setw(2) << static_cast<int>(c);
                 }
             }
             return encoded.str();
@@ -61,12 +71,16 @@ HttpClient::HttpClient(const std::string& baseUrl)
 {
     // 设置默认User-Agent
     m_defaultHeaders["User-Agent"] = "NAW-DesktopPet/1.0";
+
+    // 初始化线程池（最小1线程，默认硬件并发/4）
+    const auto hw = std::thread::hardware_concurrency();
+    const size_t desired = hw > 0 ? std::max<size_t>(1, hw / 4) : 2;
+    startWorkers(desired);
 }
 
-HttpClient::~HttpClient() = default;
-
-HttpClient::HttpClient(HttpClient&&) noexcept = default;
-HttpClient& HttpClient::operator=(HttpClient&&) noexcept = default;
+HttpClient::~HttpClient() {
+    stopWorkers();
+}
 
 void HttpClient::setDefaultHeader(const std::string& key, const std::string& value) {
     std::lock_guard<std::mutex> lock(m_clientMutex);
@@ -89,13 +103,8 @@ void HttpClient::setFollowRedirects(bool follow) {
     m_followRedirects = follow;
 }
 
-void HttpClient::setSSLVerification(bool verify) {
-    m_sslVerification = verify;
-}
-
-void HttpClient::setCACertPath(const std::string& path) {
-    m_caCertPath = path;
-}
+void HttpClient::setSSLVerification(bool verify) { m_sslVerification = verify; }
+void HttpClient::setCACertPath(const std::string& path) { m_caCertPath = path; }
 
 // ========== 同步请求方法 ==========
 
@@ -176,52 +185,38 @@ HttpResponse HttpClient::execute(const HttpRequest& request) {
 std::future<HttpResponse> HttpClient::getAsync(const std::string& path,
                                               const std::map<std::string, std::string>& params,
                                               const std::map<std::string, std::string>& headers) {
-    return std::async(std::launch::async, [this, path, params, headers]() {
-        return get(path, params, headers);
-    });
+    HttpRequest request;
+    request.method = HttpMethod::GET;
+    request.url = buildFullUrl(path);
+    request.params = params;
+    request.headers = mergeHeaders(headers);
+    request.timeoutMs = m_timeoutMs;
+    request.followRedirects = m_followRedirects;
+    return executeAsync(request);
 }
 
 std::future<HttpResponse> HttpClient::postAsync(const std::string& path,
                                                const std::string& body,
                                                const std::string& contentType,
                                                const std::map<std::string, std::string>& headers) {
-    return std::async(std::launch::async, [this, path, body, contentType, headers]() {
-        return post(path, body, contentType, headers);
-    });
-}
+    HttpRequest request;
+    request.method = HttpMethod::POST;
+    request.url = buildFullUrl(path);
+    request.body = body;
+    request.timeoutMs = m_timeoutMs;
+    request.followRedirects = m_followRedirects;
 
-std::future<HttpResponse> HttpClient::postJsonAsync(const std::string& path,
-                                                   const std::string& jsonBody,
-                                                   const std::map<std::string, std::string>& headers) {
-    return std::async(std::launch::async, [this, path, jsonBody, headers]() {
-        return postJson(path, jsonBody, headers);
-    });
+    auto mergedHeaders = mergeHeaders(headers);
+    mergedHeaders["Content-Type"] = contentType;
+    request.headers = std::move(mergedHeaders);
+
+    return executeAsync(request);
 }
 
 std::future<HttpResponse> HttpClient::executeAsync(const HttpRequest& request) {
-    return std::async(std::launch::async, [this, request]() {
+    return submitAsyncTask([this, request]() {
         return execute(request);
     });
-}
-
-// ========== 连接池统计 ==========
-
-size_t HttpClient::getActiveConnections() const {
-    std::lock_guard<std::mutex> lock(m_statsMutex);
-    return m_activeConnections;
-}
-
-size_t HttpClient::getTotalConnections() const {
-    std::lock_guard<std::mutex> lock(m_statsMutex);
-    return m_totalConnections;
-}
-
-double HttpClient::getConnectionReuseRate() const {
-    std::lock_guard<std::mutex> lock(m_statsMutex);
-    if (m_totalConnections == 0) {
-        return 0.0;
-    }
-    return static_cast<double>(m_reusedConnections) / m_totalConnections;
 }
 
 // ========== 私有方法 ==========
@@ -253,26 +248,13 @@ std::shared_ptr<httplib::Client> HttpClient::getOrCreateClient(const std::string
     // 查找现有客户端
     auto it = m_clientPool.find(host);
     if (it != m_clientPool.end() && it->second) {
-        {
-            std::lock_guard<std::mutex> statsLock(m_statsMutex);
-            m_reusedConnections++;
-        }
         return it->second;
     }
     
     // 创建新客户端
     std::shared_ptr<httplib::Client> client;
-    if (scheme == "https") {
-        client = std::make_shared<httplib::Client>(host);
-        if (!m_sslVerification) {
-            client->enable_server_certificate_verification(false);
-        }
-        if (!m_caCertPath.empty()) {
-            client->set_ca_cert_path(m_caCertPath.c_str());
-        }
-    } else {
-        client = std::make_shared<httplib::Client>(host);
-    }
+    // httplib 不区分 http/https 的 Client 构造；如需 HTTPS 应在编译层开启 CPPHTTPLIB_OPENSSL_SUPPORT。
+    client = std::make_shared<httplib::Client>(host);
     
     // 设置超时
     client->set_connection_timeout(m_poolConfig.connectionTimeout.count() / 1000,
@@ -285,13 +267,6 @@ std::shared_ptr<httplib::Client> HttpClient::getOrCreateClient(const std::string
     
     // 存储到连接池
     m_clientPool[host] = client;
-    
-    {
-        std::lock_guard<std::mutex> statsLock(m_statsMutex);
-        m_totalConnections++;
-        m_activeConnections++;
-    }
-    
     return client;
 }
 
@@ -342,8 +317,10 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
         std::string fullUrl = request.buildUrl();
         std::string path = fullUrl;
         
-        // 提取路径部分
-        size_t pathStart = fullUrl.find('/', fullUrl.find("://") + 3);
+        // 提取路径部分，避免npos溢出
+        const auto schemePos = fullUrl.find("://");
+        const auto searchStart = (schemePos == std::string::npos) ? 0 : schemePos + 3;
+        const auto pathStart = fullUrl.find('/', searchStart);
         if (pathStart != std::string::npos) {
             path = fullUrl.substr(pathStart);
         }
@@ -390,7 +367,8 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
             }
         } else {
             response.statusCode = 0;
-            response.error = "Request failed: " + std::string(result.error());
+            response.error = "Request failed: error_code=" +
+                             std::to_string(static_cast<int>(result.error()));
         }
         
     } catch (const std::exception& e) {
@@ -466,6 +444,75 @@ std::map<std::string, std::string> HttpClient::mergeHeaders(
     std::map<std::string, std::string> merged = m_defaultHeaders;
     merged.insert(requestHeaders.begin(), requestHeaders.end());
     return merged;
+}
+
+// ========== 线程池实现 ==========
+
+std::future<HttpResponse> HttpClient::submitAsyncTask(std::function<HttpResponse()> task) {
+    std::packaged_task<HttpResponse()> packaged(std::move(task));
+    auto fut = packaged.get_future();
+
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        if (m_stopWorkers) {
+            // 若已停止，立即返回错误
+            packaged();
+            return fut;
+        }
+
+        // std::function 需可复制，使用 shared_ptr 持有 move-only packaged_task
+        auto taskPtr = std::make_shared<std::packaged_task<HttpResponse()>>(std::move(packaged));
+        m_tasks.emplace([taskPtr]() { (*taskPtr)(); });
+    }
+    m_queueCv.notify_one();
+    return fut;
+}
+
+void HttpClient::startWorkers(size_t threadCount) {
+    stopWorkers();  // 防御性，先停旧池
+    m_stopWorkers = false;
+    m_threadCount = std::max<size_t>(1, threadCount);
+
+    for (size_t i = 0; i < m_threadCount; ++i) {
+        m_workers.emplace_back([this]() {
+            for (;;) {
+                std::function<void()> job;
+                {
+                    std::unique_lock<std::mutex> lock(m_queueMutex);
+                    m_queueCv.wait(lock, [this]() { return m_stopWorkers || !m_tasks.empty(); });
+                    if (m_stopWorkers && m_tasks.empty()) {
+                        return;
+                    }
+                    job = std::move(m_tasks.front());
+                    m_tasks.pop();
+                }
+                try {
+                    job();
+                } catch (...) {
+                    // 兜底，防止线程异常退出
+                }
+            }
+        });
+    }
+}
+
+void HttpClient::stopWorkers() {
+    {
+        std::lock_guard<std::mutex> lock(m_queueMutex);
+        m_stopWorkers = true;
+    }
+    m_queueCv.notify_all();
+    for (auto& worker : m_workers) {
+        if (worker.joinable()) {
+            worker.join();
+        }
+    }
+    m_workers.clear();
+    m_threadCount = 0;
+
+    // 清空剩余任务
+    std::queue<std::function<void()>> empty;
+    std::swap(m_tasks, empty);
 }
 
 } // namespace naw::desktop_pet::service::utils

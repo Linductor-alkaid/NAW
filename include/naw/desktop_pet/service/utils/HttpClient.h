@@ -1,9 +1,12 @@
 #pragma once
 
 #include "HttpTypes.h"
+#include <condition_variable>
+#include <functional>
 #include <future>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <string>
 #include <vector>
 
@@ -18,8 +21,30 @@ namespace naw::desktop_pet::service::utils {
 /**
  * @brief HTTP客户端封装类
  * 
- * 提供同步和异步HTTP请求功能，支持连接池、重试机制等。
- * 基于cpp-httplib实现。
+ * 提供同步HTTP请求功能，支持基础重试；提供基于内部线程池的异步接口。
+ * 基于cpp-httplib实现。连接池统计暂未提供。
+ *
+ * 使用示例（手工自检）：
+ * ```
+ * HttpClient client("https://httpbin.org");
+ * auto resp = client.get("/get", {{"hello", "world"}});
+ * if (resp.isSuccess()) {
+ *     // 预期statusCode=200，body包含query参数
+ * }
+ * // 异步示例
+ * auto fut = client.getAsync("/get", {{"q", "async"}});
+ * auto asyncResp = fut.get();
+ * // 同样可检查 asyncResp.isSuccess()
+ *
+ * // 异步POST示例
+ * auto futPost = client.postAsync("/post", R"({"ping":true})");
+ * auto postResp = futPost.get();
+ * // postResp.statusCode 预期 200（依赖目标服务）
+ *
+ * // 简易自检步骤：
+ * // 1) 编译后运行可执行，调用以上代码指向 https://httpbin.org
+ * // 2) 预期 GET/POST 返回 200，body 含传入参数；网络异常时 error 字符串非空。
+ * ```
  */
 class HttpClient {
 public:
@@ -34,13 +59,11 @@ public:
      */
     ~HttpClient();
     
-    // 禁止拷贝
+    // 禁止拷贝与移动（含mutex，不可安全移动）
     HttpClient(const HttpClient&) = delete;
     HttpClient& operator=(const HttpClient&) = delete;
-    
-    // 允许移动
-    HttpClient(HttpClient&&) noexcept;
-    HttpClient& operator=(HttpClient&&) noexcept;
+    HttpClient(HttpClient&&) = delete;
+    HttpClient& operator=(HttpClient&&) = delete;
     
     /**
      * @brief 设置默认请求头
@@ -119,16 +142,16 @@ public:
      * @brief 通用请求方法
      */
     HttpResponse execute(const HttpRequest& request);
-    
+
     // ========== 异步请求方法 ==========
-    
+
     /**
-     * @brief 异步GET请求
+     * @brief 异步GET请求（基于内部线程池）
      */
     std::future<HttpResponse> getAsync(const std::string& path,
                                       const std::map<std::string, std::string>& params = {},
                                       const std::map<std::string, std::string>& headers = {});
-    
+
     /**
      * @brief 异步POST请求
      */
@@ -136,35 +159,11 @@ public:
                                        const std::string& body = "",
                                        const std::string& contentType = "application/json",
                                        const std::map<std::string, std::string>& headers = {});
-    
+
     /**
-     * @brief 异步POST请求（JSON）
-     */
-    std::future<HttpResponse> postJsonAsync(const std::string& path,
-                                           const std::string& jsonBody,
-                                           const std::map<std::string, std::string>& headers = {});
-    
-    /**
-     * @brief 异步通用请求方法
+     * @brief 异步通用请求
      */
     std::future<HttpResponse> executeAsync(const HttpRequest& request);
-    
-    // ========== 连接池统计 ==========
-    
-    /**
-     * @brief 获取活跃连接数
-     */
-    size_t getActiveConnections() const;
-    
-    /**
-     * @brief 获取总连接数
-     */
-    size_t getTotalConnections() const;
-    
-    /**
-     * @brief 获取连接复用率
-     */
-    double getConnectionReuseRate() const;
 
 private:
     /**
@@ -213,15 +212,21 @@ private:
     bool m_sslVerification;
     std::string m_caCertPath;
     
-    // 连接池管理（简化实现，实际可以使用更复杂的连接池）
+    // 连接池管理（仅host级缓存，不做统计）
     mutable std::mutex m_clientMutex;
     std::map<std::string, std::shared_ptr<httplib::Client>> m_clientPool;
-    
-    // 统计信息
-    mutable std::mutex m_statsMutex;
-    size_t m_activeConnections = 0;
-    size_t m_totalConnections = 0;
-    size_t m_reusedConnections = 0;
+
+    // 线程池（用于异步接口）
+    std::vector<std::thread> m_workers;
+    std::queue<std::function<void()>> m_tasks;
+    std::mutex m_queueMutex;
+    std::condition_variable m_queueCv;
+    bool m_stopWorkers{false};
+    size_t m_threadCount{0};
+
+    std::future<HttpResponse> submitAsyncTask(std::function<HttpResponse()> task);
+    void startWorkers(size_t threadCount);
+    void stopWorkers();
 };
 
 } // namespace naw::desktop_pet::service::utils
