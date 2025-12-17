@@ -13,6 +13,8 @@
 #include <vector>
 #include <sstream>
 
+#include "HttpSerialization.h"
+
 #ifdef DELETE
 #undef DELETE
 #endif
@@ -42,6 +44,7 @@ struct HttpRequest {
     std::string body;
     int timeoutMs = 30000;  // 默认30秒超时
     bool followRedirects = true;
+    StreamHandler streamHandler = nullptr; // 可选流式回调
     
     // URL参数（用于GET请求）
     std::map<std::string, std::string> params;
@@ -96,7 +99,8 @@ struct HttpHeaders {
 
     static std::string toLower(const std::string& s) {
         std::string out = s;
-        std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c){ return std::tolower(c); });
+        std::transform(out.begin(), out.end(), out.begin(),
+                       [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
         return out;
     }
 
@@ -228,6 +232,13 @@ struct HttpResponse {
         }
         const std::string& ct = contentType.value();
         return ct.find("application/json") != std::string::npos;
+    }
+
+    /**
+     * @brief 尝试解析body为JSON，失败返回nullopt，不抛异常
+     */
+    std::optional<nlohmann::json> asJson(std::string* errMsg = nullptr) const {
+        return parseJsonSafe(body, errMsg);
     }
 };
 

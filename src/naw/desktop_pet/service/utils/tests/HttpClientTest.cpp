@@ -1,5 +1,6 @@
 #include "naw/desktop_pet/service/utils/HttpClient.h"
 #include "naw/desktop_pet/service/utils/HttpTypes.h"
+#include "naw/desktop_pet/service/utils/HttpSerialization.h"
 
 #include <chrono>
 #include <future>
@@ -187,6 +188,32 @@ int main() {
                          CHECK_GE(snap.totalRetries, 0);
                      }});
 
+    tests.push_back({"FormSerializationEncodes", []() {
+                         std::map<std::string, std::string> form{{"a b", "c+d"}, {"中文", "测试"}};
+                         auto body = serializeForm(form);
+                         CHECK_TRUE(body.find("a%20b=c%2Bd") != std::string::npos);
+                         CHECK_TRUE(body.find("%E4%B8%AD%E6%96%87=%E6%B5%8B%E8%AF%95") !=
+                                    std::string::npos);
+                     }});
+
+    tests.push_back({"JsonRoundTrip", []() {
+                         nlohmann::json j = {{"x", 1}, {"arr", {1, 2}}};
+                         auto dumped = toJsonBody(j);
+                         auto parsed = parseJsonSafe(dumped);
+                         CHECK_TRUE(parsed.has_value());
+                         CHECK_EQ((*parsed)["x"], 1);
+                         CHECK_EQ((*parsed)["arr"].size(), 2u);
+                     }});
+
+    tests.push_back({"Base64EncodeDecode", []() {
+                         std::string data = "hello base64";
+                         auto encoded = encodeBase64(data);
+                         auto decoded = decodeBase64(encoded);
+                         CHECK_TRUE(decoded.has_value());
+                         std::string round(decoded->begin(), decoded->end());
+                         CHECK_EQ(round, data);
+                     }});
+
     tests.push_back({"MergeHeadersUsesDefaultWhenConflict", []() {
                          HttpClient client("https://example.com");
                          client.setDefaultHeader("User-Agent", "UA1");
@@ -196,6 +223,19 @@ int main() {
                          // 当前实现是默认头优先，后插入的请求头不会覆盖
                          CHECK_EQ(merged.at("User-Agent"), "UA1");
                          CHECK_EQ(merged.at("X-Test"), "1");
+                     }});
+
+    tests.push_back({"HttpResponseAsJson", []() {
+                         HttpResponse resp;
+                         resp.body = R"({"ok":true,"v":2})";
+                         auto j = resp.asJson();
+                         CHECK_TRUE(j.has_value());
+                         CHECK_TRUE((*j)["ok"]);
+                         CHECK_EQ((*j)["v"], 2);
+
+                         resp.body = "not-json";
+                         auto j2 = resp.asJson();
+                         CHECK_FALSE(j2.has_value());
                      }});
 
     tests.push_back({"PatchHandled", []() {

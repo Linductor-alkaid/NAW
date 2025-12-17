@@ -1,5 +1,5 @@
 #include "naw/desktop_pet/service/utils/HttpClient.h"
- #include "naw/desktop_pet/service/utils/HttpTypes.h"
+#include "naw/desktop_pet/service/utils/HttpTypes.h"
 
 // 包含cpp-httplib头文件
 // 注意：如果不需要HTTPS支持，可以移除CPPHTTPLIB_OPENSSL_SUPPORT
@@ -35,27 +35,7 @@ std::string HttpRequest::buildUrl() const {
     for (const auto& [key, value] : params) {
         oss << (first ? "?" : "&");
         first = false;
-        
-        // URL编码：按UTF-8字节百分号转义，仅保留RFC3986未保留字符
-        auto encode = [](const std::string& str) -> std::string {
-            auto isUnreserved = [](unsigned char c) {
-                return std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~';
-            };
-
-            std::ostringstream encoded;
-            encoded << std::uppercase << std::hex << std::setfill('0');
-
-            for (unsigned char c : str) {
-                if (isUnreserved(c)) {
-                    encoded << static_cast<char>(c);
-                } else {
-                    encoded << '%' << std::setw(2) << static_cast<int>(c);
-                }
-            }
-            return encoded.str();
-        };
-        
-        oss << encode(key) << "=" << encode(value);
+        oss << encodeUrlComponent(key) << "=" << encodeUrlComponent(value);
     }
     
     return oss.str();
@@ -146,6 +126,12 @@ HttpResponse HttpClient::postJson(const std::string& path,
     return post(path, jsonBody, "application/json", headers);
 }
 
+HttpResponse HttpClient::postJson(const std::string& path,
+                                 const nlohmann::json& jsonBody,
+                                 const std::map<std::string, std::string>& headers) {
+    return postJson(path, toJsonBody(jsonBody), headers);
+}
+
 HttpResponse HttpClient::put(const std::string& path,
                             const std::string& body,
                             const std::string& contentType,
@@ -164,6 +150,12 @@ HttpResponse HttpClient::put(const std::string& path,
     return execute(request);
 }
 
+HttpResponse HttpClient::putJson(const std::string& path,
+                                const nlohmann::json& jsonBody,
+                                const std::map<std::string, std::string>& headers) {
+    return put(path, toJsonBody(jsonBody), "application/json", headers);
+}
+
 HttpResponse HttpClient::deleteRequest(const std::string& path,
                                       const std::map<std::string, std::string>& headers) {
     HttpRequest request;
@@ -173,6 +165,21 @@ HttpResponse HttpClient::deleteRequest(const std::string& path,
     request.timeoutMs = m_timeoutMs;
     request.followRedirects = m_followRedirects;
     
+    return execute(request);
+}
+
+HttpResponse HttpClient::getStream(const std::string& path,
+                                   const std::map<std::string, std::string>& params,
+                                   const std::map<std::string, std::string>& headers,
+                                   StreamHandler handler) {
+    HttpRequest request;
+    request.method = HttpMethod::GET;
+    request.url = buildFullUrl(path);
+    request.params = params;
+    request.headers = mergeHeaders(headers);
+    request.timeoutMs = m_timeoutMs;
+    request.followRedirects = m_followRedirects;
+    request.streamHandler = std::move(handler);
     return execute(request);
 }
 
@@ -272,30 +279,16 @@ HttpResponse HttpClient::patch(const std::string& path,
     return execute(request);
 }
 
+HttpResponse HttpClient::patchJson(const std::string& path,
+                                  const nlohmann::json& jsonBody,
+                                  const std::map<std::string, std::string>& headers) {
+    return patch(path, toJsonBody(jsonBody), "application/json", headers);
+}
+
 HttpResponse HttpClient::postForm(const std::string& path,
                                  const std::map<std::string, std::string>& formFields,
                                  const std::map<std::string, std::string>& headers) {
-    std::ostringstream bodyStream;
-    bool first = true;
-    for (const auto& [k, v] : formFields) {
-        if (!first) bodyStream << "&";
-        first = false;
-        // 简化编码：复用 HttpRequest::buildUrl 的安全字符判断
-        auto encode = [](const std::string& str) {
-            std::ostringstream oss;
-            oss << std::uppercase << std::hex << std::setfill('0');
-            for (unsigned char c : str) {
-                if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-                    oss << static_cast<char>(c);
-                } else {
-                    oss << '%' << std::setw(2) << static_cast<int>(c);
-                }
-            }
-            return oss.str();
-        };
-        bodyStream << encode(k) << "=" << encode(v);
-    }
-    return post(path, bodyStream.str(), "application/x-www-form-urlencoded", headers);
+    return post(path, serializeForm(formFields), "application/x-www-form-urlencoded", headers);
 }
 
 HttpResponse HttpClient::postMultipart(const std::string& path,
@@ -486,6 +479,7 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
         httplib::Result result;
         std::string fullUrl = request.buildUrl();
         std::string path = fullUrl;
+        bool usedStreaming = false;
         
         // 提取路径部分，避免npos溢出
         const auto schemePos = fullUrl.find("://");
@@ -494,10 +488,22 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
         if (pathStart != std::string::npos) {
             path = fullUrl.substr(pathStart);
         }
+
+        auto recv = [&](const char* data, size_t len) {
+            if (request.streamHandler) {
+                request.streamHandler(std::string_view{data, len});
+            }
+            return true;
+        };
         
         switch (request.method) {
             case HttpMethod::GET: {
-                result = client->Get(path.c_str(), headers);
+                if (request.streamHandler) {
+                    result = client->Get(path.c_str(), headers, recv);
+                    usedStreaming = true;
+                } else {
+                    result = client->Get(path.c_str(), headers);
+                }
                 break;
             }
             case HttpMethod::POST: {
@@ -537,6 +543,9 @@ HttpResponse HttpClient::executeOnce(const HttpRequest& request) {
             }
             response.headers = multi.toFirstValueMap();
             response.multiHeaders = std::move(multi);
+            if (request.streamHandler && !usedStreaming && !response.body.empty()) {
+                request.streamHandler(std::string_view{response.body.data(), response.body.size()});
+            }
         } else {
             response.statusCode = 0;
             response.error = "Request failed: error_code=" +

@@ -31,6 +31,7 @@ endif()
 # ============================================================================
 set(SERVICE_UTILS_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/HttpClient.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/HttpSerialization.cpp
 )
 
 # ============================================================================
@@ -39,6 +40,7 @@ set(SERVICE_UTILS_SOURCES
 set(SERVICE_UTILS_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpClient.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpTypes.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/utils/HttpSerialization.h
 )
 
 # ============================================================================
@@ -56,6 +58,7 @@ target_include_directories(NAW_ServiceUtils
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${HTTPLIB_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}/third_party/json/single_include
 )
 
 # ============================================================================

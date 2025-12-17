@@ -127,6 +127,9 @@ public:
     HttpResponse postJson(const std::string& path,
                          const std::string& jsonBody,
                          const std::map<std::string, std::string>& headers = {});
+    HttpResponse postJson(const std::string& path,
+                         const nlohmann::json& jsonBody,
+                         const std::map<std::string, std::string>& headers = {});
     
     /**
      * @brief PUT请求
@@ -135,6 +138,9 @@ public:
                     const std::string& body = "",
                     const std::string& contentType = "application/json",
                     const std::map<std::string, std::string>& headers = {});
+    HttpResponse putJson(const std::string& path,
+                        const nlohmann::json& jsonBody,
+                        const std::map<std::string, std::string>& headers = {});
 
     /**
      * @brief PATCH请求
@@ -143,6 +149,9 @@ public:
                       const std::string& body = "",
                       const std::string& contentType = "application/json",
                       const std::map<std::string, std::string>& headers = {});
+    HttpResponse patchJson(const std::string& path,
+                          const nlohmann::json& jsonBody,
+                          const std::map<std::string, std::string>& headers = {});
 
     /**
      * @brief 表单POST（application/x-www-form-urlencoded）
@@ -170,6 +179,14 @@ public:
      */
     HttpResponse deleteRequest(const std::string& path,
                               const std::map<std::string, std::string>& headers = {});
+
+    /**
+     * @brief GET流式读取，占位：通过回调按块传递正文
+     */
+    HttpResponse getStream(const std::string& path,
+                           const std::map<std::string, std::string>& params = {},
+                           const std::map<std::string, std::string>& headers = {},
+                           StreamHandler handler = nullptr);
     
     /**
      * @brief 通用请求方法
