@@ -8,6 +8,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <atomic>
 
 #ifdef DELETE
 #undef DELETE
@@ -141,6 +142,19 @@ struct HttpResponse {
 };
 
 /**
+ * @brief HTTP错误/状态分类
+ */
+enum class HttpErrorType {
+    None,
+    Network,       // statusCode == 0 or transport error
+    Timeout,       // 408 or超时
+    RateLimit,     // 429
+    Client,        // 4xx
+    Server,        // 5xx
+    Unknown
+};
+
+/**
  * @brief 连接池配置
  */
 struct ConnectionPoolConfig {
@@ -159,6 +173,8 @@ struct RetryConfig {
     double backoffMultiplier = 2.0;                  // 退避倍数
     std::chrono::milliseconds maxDelay{30000};        // 最大延迟（30秒）
     bool enableJitter = true;                         // 是否启用随机抖动
+    bool retryOnRateLimit = true;                     // 是否对429重试
+    bool retryOnServerError = true;                   // 是否对5xx重试
     
     /**
      * @brief 计算重试延迟
@@ -181,6 +197,33 @@ struct RetryConfig {
         const auto millis =
             static_cast<std::chrono::milliseconds::rep>(std::max(0.0, withJitter));
         return std::chrono::milliseconds{millis};
+    }
+};
+
+/**
+ * @brief 重试统计
+ */
+struct RetryStatsSnapshot {
+    int totalAttempts{0};
+    int totalRetries{0};
+    int totalSuccessAfterRetry{0};
+};
+
+struct RetryStats {
+    std::atomic<int> totalAttempts{0};
+    std::atomic<int> totalRetries{0};
+    std::atomic<int> totalSuccessAfterRetry{0};
+
+    RetryStats() = default;
+    RetryStats(const RetryStats&) = delete;
+    RetryStats& operator=(const RetryStats&) = delete;
+
+    RetryStatsSnapshot snapshot() const {
+        RetryStatsSnapshot snap;
+        snap.totalAttempts = totalAttempts.load(std::memory_order_relaxed);
+        snap.totalRetries = totalRetries.load(std::memory_order_relaxed);
+        snap.totalSuccessAfterRetry = totalSuccessAfterRetry.load(std::memory_order_relaxed);
+        return snap;
     }
 };
 

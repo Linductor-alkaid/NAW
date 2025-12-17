@@ -9,6 +9,7 @@
 #include <queue>
 #include <string>
 #include <vector>
+#include <chrono>
 
 // 前向声明，避免包含整个httplib.h头文件
 // 实际使用时会在cpp文件中包含
@@ -44,6 +45,7 @@ namespace naw::desktop_pet::service::utils {
  * // 简易自检步骤：
  * // 1) 编译后运行可执行，调用以上代码指向 https://httpbin.org
  * // 2) 预期 GET/POST 返回 200，body 含传入参数；网络异常时 error 字符串非空。
+ * // 3) 可调用 getRetryStats() 观察重试计数，或在网络不通时触发重试。
  * ```
  */
 class HttpClient {
@@ -165,6 +167,13 @@ public:
      */
     std::future<HttpResponse> executeAsync(const HttpRequest& request);
 
+    // ========== 统计接口（轻量级） ==========
+    size_t getActiveConnections() const;
+    size_t getTotalConnections() const;
+    size_t getReusedConnections() const;
+    double getConnectionReuseRate() const;
+    RetryStatsSnapshot getRetryStats() const;
+
 private:
     /**
      * @brief 创建或获取httplib客户端
@@ -214,7 +223,17 @@ private:
     
     // 连接池管理（仅host级缓存，不做统计）
     mutable std::mutex m_clientMutex;
-    std::map<std::string, std::shared_ptr<httplib::Client>> m_clientPool;
+    struct ClientEntry {
+        std::shared_ptr<httplib::Client> client;
+        std::chrono::steady_clock::time_point lastUsed;
+        size_t useCount{0};
+    };
+    std::map<std::string, ClientEntry> m_clientPool;
+    size_t m_totalConnections{0};
+    size_t m_reusedConnections{0};
+
+    void pruneIdleClients();
+    void enforcePoolLimits();
 
     // 线程池（用于异步接口）
     std::vector<std::thread> m_workers;
@@ -223,10 +242,12 @@ private:
     std::condition_variable m_queueCv;
     bool m_stopWorkers{false};
     size_t m_threadCount{0};
+    RetryStats m_retryStats;
 
     std::future<HttpResponse> submitAsyncTask(std::function<HttpResponse()> task);
     void startWorkers(size_t threadCount);
     void stopWorkers();
+    static HttpErrorType classifyStatus(int statusCode);
 };
 
 } // namespace naw::desktop_pet::service::utils

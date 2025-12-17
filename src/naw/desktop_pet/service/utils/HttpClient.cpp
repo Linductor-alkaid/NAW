@@ -244,11 +244,15 @@ std::shared_ptr<httplib::Client> HttpClient::getOrCreateClient(const std::string
     }
     
     std::lock_guard<std::mutex> lock(m_clientMutex);
+    pruneIdleClients();
     
     // 查找现有客户端
     auto it = m_clientPool.find(host);
-    if (it != m_clientPool.end() && it->second) {
-        return it->second;
+    if (it != m_clientPool.end() && it->second.client) {
+        it->second.lastUsed = std::chrono::steady_clock::now();
+        ++it->second.useCount;
+        ++m_reusedConnections;
+        return it->second.client;
     }
     
     // 创建新客户端
@@ -266,19 +270,29 @@ std::shared_ptr<httplib::Client> HttpClient::getOrCreateClient(const std::string
     client->set_follow_location(m_followRedirects);
     
     // 存储到连接池
-    m_clientPool[host] = client;
+    ClientEntry entry;
+    entry.client = client;
+    entry.lastUsed = std::chrono::steady_clock::now();
+    entry.useCount = 1;
+    enforcePoolLimits();
+    m_clientPool[host] = std::move(entry);
+    ++m_totalConnections;
     return client;
 }
 
 HttpResponse HttpClient::executeWithRetry(const HttpRequest& request) {
     HttpResponse response;
     int attempt = 0;
+    m_retryStats.totalAttempts.fetch_add(1, std::memory_order_relaxed);
     
     while (attempt <= m_retryConfig.maxRetries) {
         response = executeOnce(request);
         
         // 如果成功或不可重试的错误，直接返回
         if (response.isSuccess() || !isRetryableError(response)) {
+            if (response.isSuccess() && attempt > 0) {
+                m_retryStats.totalSuccessAfterRetry.fetch_add(1, std::memory_order_relaxed);
+            }
             break;
         }
         
@@ -286,6 +300,7 @@ HttpResponse HttpClient::executeWithRetry(const HttpRequest& request) {
         if (attempt < m_retryConfig.maxRetries) {
             auto delay = m_retryConfig.getRetryDelay(attempt);
             std::this_thread::sleep_for(delay);
+            m_retryStats.totalRetries.fetch_add(1, std::memory_order_relaxed);
             attempt++;
         } else {
             break;
@@ -415,28 +430,19 @@ std::string HttpClient::buildFullUrl(const std::string& path) const {
 }
 
 bool HttpClient::isRetryableError(const HttpResponse& response) const {
-    // 网络错误（statusCode为0）
-    if (response.statusCode == 0) {
-        return true;
+    const auto type = classifyStatus(response.statusCode);
+    switch (type) {
+        case HttpErrorType::Network:
+            return true;
+        case HttpErrorType::Timeout:
+            return true;
+        case HttpErrorType::RateLimit:
+            return m_retryConfig.retryOnRateLimit;
+        case HttpErrorType::Server:
+            return m_retryConfig.retryOnServerError;
+        default:
+            return false;
     }
-    
-    // 服务器错误（5xx）通常可重试
-    if (response.isServerError()) {
-        return true;
-    }
-    
-    // 限流错误（429）可重试
-    if (response.statusCode == 429) {
-        return true;
-    }
-    
-    // 请求超时（408）可重试
-    if (response.statusCode == 408) {
-        return true;
-    }
-    
-    // 其他客户端错误（4xx）通常不可重试
-    return false;
 }
 
 std::map<std::string, std::string> HttpClient::mergeHeaders(
@@ -444,6 +450,82 @@ std::map<std::string, std::string> HttpClient::mergeHeaders(
     std::map<std::string, std::string> merged = m_defaultHeaders;
     merged.insert(requestHeaders.begin(), requestHeaders.end());
     return merged;
+}
+
+size_t HttpClient::getActiveConnections() const {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    return m_clientPool.size();
+}
+
+size_t HttpClient::getTotalConnections() const {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    return m_totalConnections;
+}
+
+size_t HttpClient::getReusedConnections() const {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    return m_reusedConnections;
+}
+
+double HttpClient::getConnectionReuseRate() const {
+    std::lock_guard<std::mutex> lock(m_clientMutex);
+    if (m_totalConnections == 0) {
+        return 0.0;
+    }
+    return static_cast<double>(m_reusedConnections) /
+           static_cast<double>(m_totalConnections);
+}
+
+RetryStatsSnapshot HttpClient::getRetryStats() const {
+    return m_retryStats.snapshot();
+}
+
+HttpErrorType HttpClient::classifyStatus(int statusCode) {
+    if (statusCode == 0) {
+        return HttpErrorType::Network;
+    }
+    if (statusCode == 408) {
+        return HttpErrorType::Timeout;
+    }
+    if (statusCode == 429) {
+        return HttpErrorType::RateLimit;
+    }
+    if (statusCode >= 500 && statusCode < 600) {
+        return HttpErrorType::Server;
+    }
+    if (statusCode >= 400 && statusCode < 500) {
+        return HttpErrorType::Client;
+    }
+    return HttpErrorType::None;
+}
+
+void HttpClient::pruneIdleClients() {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto it = m_clientPool.begin(); it != m_clientPool.end(); ) {
+        if (now - it->second.lastUsed > m_poolConfig.idleTimeout) {
+            it = m_clientPool.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void HttpClient::enforcePoolLimits() {
+    // 如果超出总连接数限制，淘汰最久未使用的
+    while (m_clientPool.size() >= m_poolConfig.maxConnections) {
+        auto oldest = m_clientPool.end();
+        for (auto it = m_clientPool.begin(); it != m_clientPool.end(); ++it) {
+            if (oldest == m_clientPool.end() ||
+                it->second.lastUsed < oldest->second.lastUsed) {
+                oldest = it;
+            }
+        }
+        if (oldest != m_clientPool.end()) {
+            m_clientPool.erase(oldest);
+        } else {
+            break;
+        }
+    }
 }
 
 // ========== 线程池实现 ==========
