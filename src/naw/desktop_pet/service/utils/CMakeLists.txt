@@ -89,17 +89,6 @@ message(STATUS "  Headers: ${SERVICE_UTILS_HEADERS}")
 
 include(CTest)
 if(BUILD_TESTING)
-    include(FetchContent)
-    set(BUILD_GMOCK OFF CACHE BOOL "Disable gmock" FORCE)
-    set(BUILD_GTEST ON CACHE BOOL "Enable gtest" FORCE)
-    set(INSTALL_GTEST OFF CACHE BOOL "Disable gtest install" FORCE)
-    FetchContent_Declare(
-        gtest
-        GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG v1.14.0
-    )
-    FetchContent_MakeAvailable(gtest)
-
     add_executable(HttpClientTest
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/HttpClientTest.cpp
     )
@@ -111,7 +100,6 @@ if(BUILD_TESTING)
     target_link_libraries(HttpClientTest
         PRIVATE
             NAW_ServiceUtils
-            gtest_main
     )
     target_include_directories(HttpClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME HttpClientTest COMMAND HttpClientTest)

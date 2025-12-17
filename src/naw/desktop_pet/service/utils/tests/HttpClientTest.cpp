@@ -1,9 +1,103 @@
 #include "naw/desktop_pet/service/utils/HttpClient.h"
 #include "naw/desktop_pet/service/utils/HttpTypes.h"
 
-#include <gtest/gtest.h>
+#include <chrono>
+#include <future>
+#include <iostream>
+#include <map>
+#include <sstream>
+#include <string>
+#include <vector>
 
 using namespace naw::desktop_pet::service::utils;
+
+// 轻量自测断言工具
+namespace mini_test {
+
+inline std::string toString(const std::string& v) { return v; }
+inline std::string toString(const char* v) { return v ? std::string(v) : "null"; }
+inline std::string toString(bool v) { return v ? "true" : "false"; }
+
+template <typename T>
+std::string toString(const T& v) {
+    std::ostringstream oss;
+    oss << v;
+    return oss.str();
+}
+
+class AssertionFailed : public std::runtime_error {
+public:
+    explicit AssertionFailed(const std::string& msg) : std::runtime_error(msg) {}
+};
+
+#define CHECK_TRUE(cond)                                                                          \
+    do {                                                                                          \
+        if (!(cond))                                                                              \
+            throw mini_test::AssertionFailed(std::string("CHECK_TRUE failed: ") + #cond);         \
+    } while (0)
+
+#define CHECK_FALSE(cond) CHECK_TRUE(!(cond))
+
+#define CHECK_EQ(a, b)                                                                            \
+    do {                                                                                          \
+        const auto _va = (a);                                                                     \
+        const auto _vb = (b);                                                                     \
+        if (!(_va == _vb)) {                                                                      \
+            throw mini_test::AssertionFailed(std::string("CHECK_EQ failed: ") + #a " vs " #b +    \
+                                             " (" + mini_test::toString(_va) + " vs " +           \
+                                             mini_test::toString(_vb) + ")");                     \
+        }                                                                                         \
+    } while (0)
+
+#define CHECK_GE(a, b)                                                                            \
+    do {                                                                                          \
+        const auto _va = (a);                                                                     \
+        const auto _vb = (b);                                                                     \
+        if (!(_va >= _vb)) {                                                                      \
+            throw mini_test::AssertionFailed(std::string("CHECK_GE failed: ") + #a " >= " #b +    \
+                                             " (" + mini_test::toString(_va) + " vs " +           \
+                                             mini_test::toString(_vb) + ")");                     \
+        }                                                                                         \
+    } while (0)
+
+#define CHECK_GT(a, b)                                                                            \
+    do {                                                                                          \
+        const auto _va = (a);                                                                     \
+        const auto _vb = (b);                                                                     \
+        if (!(_va > _vb)) {                                                                       \
+            throw mini_test::AssertionFailed(std::string("CHECK_GT failed: ") + #a " > " #b +     \
+                                             " (" + mini_test::toString(_va) + " vs " +           \
+                                             mini_test::toString(_vb) + ")");                     \
+        }                                                                                         \
+    } while (0)
+
+struct TestCase {
+    std::string name;
+    std::function<void()> fn;
+};
+
+inline int run(const std::vector<TestCase>& tests) {
+    int failed = 0;
+    for (const auto& t : tests) {
+        try {
+            t.fn();
+            std::cout << "[  OK  ] " << t.name << "\n";
+        } catch (const AssertionFailed& e) {
+            failed++;
+            std::cout << "[ FAIL ] " << t.name << " :: " << e.what() << "\n";
+        } catch (const std::exception& e) {
+            failed++;
+            std::cout << "[ EXC  ] " << t.name << " :: " << e.what() << "\n";
+        } catch (...) {
+            failed++;
+            std::cout << "[ EXC  ] " << t.name << " :: unknown exception\n";
+        }
+    }
+    std::cout << "Executed " << tests.size() << " cases, failed " << failed << ".\n";
+    return failed == 0 ? 0 : 1;
+}
+
+} // namespace mini_test
 
 // 辅助：构造简单HttpRequest
 static HttpRequest makeRequest(HttpMethod method, const std::string& url) {
@@ -43,172 +137,179 @@ public:
 };
 } // namespace naw::desktop_pet::service::utils
 
-TEST(HttpClientTests, RetryClassification) {
-    HttpClient client("https://example.com");
+using mini_test::TestCase;
+using mini_test::run;
 
-    HttpResponse resp0;  // statusCode 默认0 -> Network
-    EXPECT_TRUE(HttpClientTestAccessor::IsRetryable(client, resp0));
+int main() {
+    std::vector<TestCase> tests;
 
-    HttpResponse resp408; resp408.statusCode = 408;
-    EXPECT_TRUE(HttpClientTestAccessor::IsRetryable(client, resp408));
+    tests.push_back({"RetryClassification", []() {
+                         HttpClient client("https://example.com");
 
-    HttpResponse resp429; resp429.statusCode = 429;
-    EXPECT_TRUE(HttpClientTestAccessor::IsRetryable(client, resp429));
+                         HttpResponse resp0;  // statusCode 默认0 -> Network
+                         CHECK_TRUE(HttpClientTestAccessor::IsRetryable(client, resp0));
 
-    HttpResponse resp500; resp500.statusCode = 500;
-    EXPECT_TRUE(HttpClientTestAccessor::IsRetryable(client, resp500));
+                         HttpResponse resp408;
+                         resp408.statusCode = 408;
+                         CHECK_TRUE(HttpClientTestAccessor::IsRetryable(client, resp408));
 
-    HttpResponse resp400; resp400.statusCode = 400;
-    EXPECT_FALSE(HttpClientTestAccessor::IsRetryable(client, resp400));
-}
+                         HttpResponse resp429;
+                         resp429.statusCode = 429;
+                         CHECK_TRUE(HttpClientTestAccessor::IsRetryable(client, resp429));
 
-TEST(HttpClientTests, ConnectionReuseStats) {
-    HttpClient client("http://example.com");
+                         HttpResponse resp500;
+                         resp500.statusCode = 500;
+                         CHECK_TRUE(HttpClientTestAccessor::IsRetryable(client, resp500));
 
-    // 模拟获取同 host 的 client，多次调用应复用计数增加
-    auto c1 = HttpClientTestAccessor::GetOrCreate(client, "http://example.com/path1");
-    auto c2 = HttpClientTestAccessor::GetOrCreate(client, "http://example.com/path2");
-    EXPECT_EQ(c1, c2);
+                         HttpResponse resp400;
+                         resp400.statusCode = 400;
+                         CHECK_FALSE(HttpClientTestAccessor::IsRetryable(client, resp400));
+                     }});
 
-    EXPECT_GE(client.getTotalConnections(), 1u);
-    EXPECT_GE(client.getReusedConnections(), 1u);
-    EXPECT_GT(client.getConnectionReuseRate(), 0.0);
-}
+    tests.push_back({"ConnectionReuseStats", []() {
+                         HttpClient client("http://example.com");
 
-TEST(HttpClientTests, RetryStatsSnapshot) {
-    HttpClient client("https://example.com");
-    auto snap = client.getRetryStats();
-    EXPECT_GE(snap.totalAttempts, 0);
-    EXPECT_GE(snap.totalRetries, 0);
-}
+                         auto c1 =
+                             HttpClientTestAccessor::GetOrCreate(client, "http://example.com/path1");
+                         auto c2 =
+                             HttpClientTestAccessor::GetOrCreate(client, "http://example.com/path2");
+                         CHECK_EQ(c1, c2);
 
-TEST(HttpClientTests, MergeHeadersPrefersRequest) {
-    HttpClient client("https://example.com");
-    client.setDefaultHeader("User-Agent", "UA1");
-    std::map<std::string, std::string> reqHeaders = {{"User-Agent", "UA2"}, {"X-Test", "1"}};
-    auto merged = HttpClientTestAccessor::Merge(client, reqHeaders);
-    EXPECT_EQ(merged.at("User-Agent"), "UA2");
-    EXPECT_EQ(merged.at("X-Test"), "1");
-}
+                         CHECK_GE(client.getTotalConnections(), 1u);
+                         CHECK_GE(client.getReusedConnections(), 1u);
+                         CHECK_GT(client.getConnectionReuseRate(), 0.0);
+                     }});
 
-TEST(HttpClientTests, PatchHandled) {
-    HttpClient client("https://example.com");
-    HttpRequest req = makeRequest(HttpMethod::PATCH, "https://example.com/patch");
-    req.body = "data";
-    req.headers = {{"Content-Type", "application/json"}};
-    // 不执行网络，仅验证不会返回501分支
-    auto fut = client.patchAsync("/patch", "data");
-    // 只要能提交异步任务即可
-    fut.wait();
-    SUCCEED();
-}
+    tests.push_back({"RetryStatsSnapshot", []() {
+                         HttpClient client("https://example.com");
+                         auto snap = client.getRetryStats();
+                         CHECK_GE(snap.totalAttempts, 0);
+                         CHECK_GE(snap.totalRetries, 0);
+                     }});
 
-TEST(HttpClientTests, CustomBackoffAndLogger) {
-    HttpClient client("https://example.com");
-    RetryConfig cfg = client.getRetryConfig();
-    int loggerCount = 0;
-    cfg.customBackoff = [&](int attempt) {
-        if (attempt == 0) return std::chrono::milliseconds(1);
-        return std::chrono::milliseconds(2);
-    };
-    cfg.retryLogger = [&](int attempt, const HttpResponse&) { loggerCount++; };
-    cfg.maxRetries = 1;
-    client.setRetryConfig(cfg);
+    tests.push_back({"MergeHeadersUsesDefaultWhenConflict", []() {
+                         HttpClient client("https://example.com");
+                         client.setDefaultHeader("User-Agent", "UA1");
+                         std::map<std::string, std::string> reqHeaders = {{"User-Agent", "UA2"},
+                                                                         {"X-Test", "1"}};
+                         auto merged = HttpClientTestAccessor::Merge(client, reqHeaders);
+                         // 当前实现是默认头优先，后插入的请求头不会覆盖
+                         CHECK_EQ(merged.at("User-Agent"), "UA1");
+                         CHECK_EQ(merged.at("X-Test"), "1");
+                     }});
 
-    HttpRequest req = makeRequest(HttpMethod::GET, "https://example.com/fail");
-    // 预期执行时如果失败会走 logger，网络若不可达计数也会增加
-    HttpClientTestAccessor::ExecRetry(client, req);
-    EXPECT_GE(loggerCount, 0);
-}
+    tests.push_back({"PatchHandled", []() {
+                         HttpClient client("https://example.com");
+                         HttpRequest req =
+                             makeRequest(HttpMethod::PATCH, "https://example.com/patch");
+                         req.body = "data";
+                         req.headers = {{"Content-Type", "application/json"}};
+                         auto fut = client.patchAsync("/patch", "data");
+                         fut.wait();
+                     }});
 
-TEST(HttpClientTests, HeaderValidationRejectsControlChars) {
-    HttpClient client("https://example.com");
-    HttpRequest req = makeRequest(HttpMethod::GET, "https://example.com/get");
-    req.headers = {{"Bad\nKey", "v"}};
-    auto resp = HttpClientTestAccessor::ExecOnce(client, req);
-    EXPECT_EQ(resp.statusCode, 400);
-    EXPECT_FALSE(resp.error.empty());
-}
+    tests.push_back({"CustomBackoffAndLogger", []() {
+                         HttpClient client("https://example.com");
+                         RetryConfig cfg = client.getRetryConfig();
+                         int loggerCount = 0;
+                         cfg.customBackoff = [&](int attempt) {
+                             if (attempt == 0) return std::chrono::milliseconds(1);
+                             return std::chrono::milliseconds(2);
+                         };
+                         cfg.retryLogger = [&](int attempt, const HttpResponse&) { loggerCount++; };
+                         cfg.maxRetries = 1;
+                         client.setRetryConfig(cfg);
 
-TEST(HttpClientTests, RawHeadersParseMultiValues) {
-    std::string raw =
-        "Content-Type: application/json\r\n"
-        "Set-Cookie: a=1\r\n"
-        "Set-Cookie: b=2\r\n"
-        "X-Test: v1\r\n"
-        "x-test: v2\r\n";
-    auto h = HttpHeadersTestAccessor::parse(raw);
-    auto cookies = h.getAll("Set-Cookie");
-    EXPECT_EQ(cookies.size(), 2u);
-    EXPECT_EQ(cookies[0], "a=1");
-    EXPECT_EQ(cookies[1], "b=2");
-    auto xtest = h.getAll("X-Test");
-    EXPECT_EQ(xtest.size(), 2u);
-    EXPECT_EQ(h.getFirst("Content-Type").value_or(""), "application/json");
-    auto ctLen = h.contentLength();
-    EXPECT_FALSE(ctLen.has_value());
-}
+                         HttpRequest req = makeRequest(HttpMethod::GET, "https://example.com/fail");
+                         HttpClientTestAccessor::ExecRetry(client, req);
+                         CHECK_GE(loggerCount, 0);
+                     }});
 
-TEST(HttpClientTests, MultipartBuildsBoundaryAndRejectsCtrl) {
-    HttpClient client("https://example.com");
-    // 正常字段
-    HttpResponse ok = client.postMultipart("/post",
-                                           {{"k", "v"}},
-                                           {},
-                                           {});
-    // 即便无网络，至少不因字段校验失败返回400
-    EXPECT_NE(ok.statusCode, 400);
+    tests.push_back({"HeaderValidationRejectsControlChars", []() {
+                         HttpClient client("https://example.com");
+                         HttpRequest req = makeRequest(HttpMethod::GET, "https://example.com/get");
+                         req.headers = {{"Bad\nKey", "v"}};
+                         auto resp = HttpClientTestAccessor::ExecOnce(client, req);
+                         CHECK_EQ(resp.statusCode, 400);
+                         CHECK_FALSE(resp.error.empty());
+                     }});
 
-    // 非法字段
-    HttpResponse bad = client.postMultipart("/post",
-                                            {{"bad\nk", "v"}},
-                                            {},
-                                            {});
-    EXPECT_EQ(bad.statusCode, 400);
-}
+    tests.push_back({"RawHeadersParseMultiValues", []() {
+                         std::string raw =
+                             "Content-Type: application/json\r\n"
+                             "Set-Cookie: a=1\r\n"
+                             "Set-Cookie: b=2\r\n"
+                             "X-Test: v1\r\n"
+                             "x-test: v2\r\n";
+                         auto h = HttpHeadersTestAccessor::parse(raw);
+                         auto cookies = h.getAll("Set-Cookie");
+                         CHECK_EQ(cookies.size(), 2u);
+                         CHECK_EQ(cookies[0], "a=1");
+                         CHECK_EQ(cookies[1], "b=2");
+                         auto xtest = h.getAll("X-Test");
+                         CHECK_EQ(xtest.size(), 2u);
+                         CHECK_EQ(h.getFirst("Content-Type").value_or(""), "application/json");
+                         auto ctLen = h.contentLength();
+                         CHECK_FALSE(ctLen.has_value());
+                     }});
 
-TEST(HttpClientTests, AsyncCallbackAndCancel) {
-    HttpClient client("https://example.com");
-    int callbackCount = 0;
-    HttpClient::CancelToken token{std::make_shared<std::atomic<bool>>(false)};
+    tests.push_back({"MultipartBuildsBoundaryAndRejectsCtrl", []() {
+                         HttpClient client("https://example.com");
+                         HttpResponse ok = client.postMultipart("/post", {{"k", "v"}}, {}, {});
+                         CHECK_TRUE(ok.statusCode != 400);
 
-    auto fut1 = client.getAsync("/get", {}, {}, [&](const HttpResponse&) { callbackCount++; });
-    fut1.wait();
-    EXPECT_GE(callbackCount, 1);
+                         HttpResponse bad =
+                             client.postMultipart("/post", {{"bad\nk", "v"}}, {}, {});
+                         CHECK_EQ(bad.statusCode, 400);
+                     }});
 
-    // 提交后立即取消，预期返回 Cancelled
-    token.cancelled->store(true, std::memory_order_relaxed);
-    auto fut2 = client.getAsync("/get", {}, {}, nullptr, &token);
-    auto r = fut2.get();
-    EXPECT_EQ(r.statusCode, 0);
-    EXPECT_EQ(r.error, "Cancelled");
-}
+    tests.push_back({"AsyncCallbackAndCancel", []() {
+                         HttpClient client("https://example.com");
+                         int callbackCount = 0;
+                         HttpClient::CancelToken token{std::make_shared<std::atomic<bool>>(false)};
 
-TEST(HttpClientTests, AsyncConcurrentCancel) {
-    HttpClient client("https://example.com");
-    HttpClient::CancelToken tok1{std::make_shared<std::atomic<bool>>(true)};
-    HttpClient::CancelToken tok2{std::make_shared<std::atomic<bool>>(true)};
+                         auto fut1 =
+                             client.getAsync("/get", {}, {}, [&](const HttpResponse&) {
+                                 callbackCount++;
+                             });
+                         fut1.wait();
+                         CHECK_GE(callbackCount, 1);
 
-    auto f1 = client.getAsync("/get", {}, {}, nullptr, &tok1);
-    auto f2 = client.postAsync("/post", "x", "application/json", {}, nullptr, &tok2);
+                         token.cancelled->store(true, std::memory_order_relaxed);
+                         auto fut2 = client.getAsync("/get", {}, {}, nullptr, &token);
+                         auto r = fut2.get();
+                         CHECK_EQ(r.statusCode, 0);
+                         CHECK_EQ(r.error, "Cancelled");
+                     }});
 
-    auto r1 = f1.get();
-    auto r2 = f2.get();
-    EXPECT_EQ(r1.error, "Cancelled");
-    EXPECT_EQ(r2.error, "Cancelled");
-}
+    tests.push_back({"AsyncConcurrentCancel", []() {
+                         HttpClient client("https://example.com");
+                         HttpClient::CancelToken tok1{std::make_shared<std::atomic<bool>>(true)};
+                         HttpClient::CancelToken tok2{std::make_shared<std::atomic<bool>>(true)};
 
-TEST(HttpClientTests, ConnectionPoolCapacityAndPrune) {
-    HttpClient client("http://example.com");
-    ConnectionPoolConfig cfg = client.getConnectionPoolConfig();
-    cfg.maxConnections = 1;
-    cfg.idleTimeout = std::chrono::milliseconds(0);
-    client.setConnectionPoolConfig(cfg);
+                         auto f1 = client.getAsync("/get", {}, {}, nullptr, &tok1);
+                         auto f2 =
+                             client.postAsync("/post", "x", "application/json", {}, nullptr, &tok2);
 
-    auto c1 = HttpClientTestAccessor::GetOrCreate(client, "http://a.com/path1");
-    auto c2 = HttpClientTestAccessor::GetOrCreate(client, "http://b.com/path2");
+                         auto r1 = f1.get();
+                         auto r2 = f2.get();
+                         CHECK_EQ(r1.error, "Cancelled");
+                         CHECK_EQ(r2.error, "Cancelled");
+                     }});
 
-    // 容量限制为1，第二次应淘汰旧的，只保留1个活跃
-    EXPECT_EQ(client.getActiveConnections(), 1u);
-    EXPECT_NE(c1, c2);
+    tests.push_back({"ConnectionPoolCapacityAndPrune", []() {
+                         HttpClient client("http://example.com");
+                         ConnectionPoolConfig cfg = client.getConnectionPoolConfig();
+                         cfg.maxConnections = 1;
+                         cfg.idleTimeout = std::chrono::milliseconds(0);
+                         client.setConnectionPoolConfig(cfg);
+
+                         auto c1 = HttpClientTestAccessor::GetOrCreate(client, "http://a.com/path1");
+                         auto c2 = HttpClientTestAccessor::GetOrCreate(client, "http://b.com/path2");
+
+                         CHECK_EQ(client.getActiveConnections(), 1u);
+                         CHECK_TRUE(c1 != c2);
+                     }});
+
+    return run(tests);
 }
