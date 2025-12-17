@@ -9,6 +9,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <cstring>
 
 #include <miniaudio.h>
 
@@ -79,6 +80,28 @@ public:
     // ---- 播放 ----
     std::optional<std::uint32_t> playFile(const std::string& path, const PlaybackOptions& opts = {});
     std::optional<std::uint32_t> playMemory(const void* data, std::size_t size, const PlaybackOptions& opts = {});
+    /**
+     * @brief 启动基于内存块的流式播放（面向 TTS PCM/WAV 数据）
+     * @param stream PCM 参数（采样率/声道/格式必须有效且非 0）
+     * @param bufferFrames 内部环形缓冲的帧容量，默认 1 秒（约 48000 帧）
+     * @param opts 播放选项（音量/loop，loop 对流式场景通常不建议）
+     * @return soundId：成功返回可用于 append/finish 的 id
+     */
+    std::optional<std::uint32_t> startStream(const AudioStreamConfig& stream,
+                                             std::size_t bufferFrames = 48000,
+                                             const PlaybackOptions& opts = {});
+    /**
+     * @brief 追加流式 PCM 数据（需与 startStream 的 stream 参数一致）
+     * @param soundId startStream 返回的 id
+     * @param pcm PCM 数据指针
+     * @param bytes 字节数（需为整帧对齐）
+     * @return 是否成功写入；缓冲不足时返回 false
+     */
+    bool appendStreamData(std::uint32_t soundId, const void* pcm, std::size_t bytes);
+    /**
+     * @brief 标记流式播放已推送完成，耗尽缓冲后自然结束
+     */
+    void finishStream(std::uint32_t soundId);
     bool pause(std::uint32_t soundId);
     bool resume(std::uint32_t soundId);
     bool stop(std::uint32_t soundId);
@@ -112,6 +135,7 @@ private:
     struct SoundHandle {
         void* sound{nullptr};   // 实际类型为 ma_sound*
         void* decoder{nullptr}; // 实际类型为 ma_decoder*，仅内存播放使用
+        void* streamSource{nullptr}; // 实际类型为 StreamSource*，流式播放使用
         std::uint64_t pausedFrame{0};
         bool paused{false};
     };

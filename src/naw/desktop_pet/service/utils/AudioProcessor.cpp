@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <cstring>
 #include <miniaudio.h>
 #include <thread>
 
@@ -10,6 +11,139 @@ namespace {
 ma_device* toDevice(void* ptr) { return reinterpret_cast<ma_device*>(ptr); }
 ma_engine* toEngine(void* ptr) { return reinterpret_cast<ma_engine*>(ptr); }
 ma_sound* toSound(void* ptr) { return reinterpret_cast<ma_sound*>(ptr); }
+
+struct StreamSource {
+    ma_data_source_base base{};
+    ma_pcm_rb rb{};
+    naw::desktop_pet::service::utils::AudioStreamConfig stream{};
+    std::atomic<bool> finished{false};
+    std::size_t bytesPerFrame{0};
+};
+
+static StreamSource* getStreamSource(ma_data_source* ds) {
+    return reinterpret_cast<StreamSource*>(ds);
+}
+
+static ma_result streamRead(ma_data_source* pDataSource, void* pFramesOut, ma_uint64 frameCount, ma_uint64* pFramesRead) {
+    auto* src = getStreamSource(pDataSource);
+    if (src == nullptr || pFramesOut == nullptr) {
+        return MA_INVALID_ARGS;
+    }
+
+    ma_uint64 totalRead = 0;
+    auto* dst = static_cast<std::uint8_t*>(pFramesOut);
+    const std::size_t bytesPerFrame = src->bytesPerFrame;
+
+    while (totalRead < frameCount) {
+        const ma_uint64 requested = frameCount - totalRead;
+        const ma_uint64 available = ma_pcm_rb_available_read(&src->rb);
+
+        if (available == 0) {
+            if (src->finished.load(std::memory_order_relaxed)) {
+                if (totalRead == 0) {
+                    if (pFramesRead) {
+                        *pFramesRead = 0;
+                    }
+                    return MA_AT_END;
+                }
+                break;
+            }
+            // 缓冲暂时为空：输出静音以平滑播放
+            std::memset(dst + totalRead * bytesPerFrame, 0, static_cast<std::size_t>(requested) * bytesPerFrame);
+            totalRead += requested;
+            break;
+        }
+
+        const ma_uint64 toRead = std::min(requested, available);
+        ma_uint32 acquire = static_cast<ma_uint32>(toRead);
+        void* pRead = nullptr;
+        if (ma_pcm_rb_acquire_read(&src->rb, &acquire, &pRead) != MA_SUCCESS || pRead == nullptr) {
+            break;
+        }
+        std::memcpy(dst + totalRead * bytesPerFrame, pRead, static_cast<std::size_t>(acquire) * bytesPerFrame);
+        ma_pcm_rb_commit_read(&src->rb, acquire);
+        totalRead += acquire;
+
+        if (acquire < toRead && src->finished.load(std::memory_order_relaxed)) {
+            break;
+        }
+    }
+
+    if (pFramesRead) {
+        *pFramesRead = totalRead;
+    }
+    return MA_SUCCESS;
+}
+
+static ma_result streamGetDataFormat(ma_data_source* pDataSource,
+                                     ma_format* pFormat,
+                                     ma_uint32* pChannels,
+                                     ma_uint32* pSampleRate,
+                                     ma_channel* /*pChannelMap*/,
+                                     size_t /*channelMapCap*/) {
+    auto* src = getStreamSource(pDataSource);
+    if (src == nullptr) {
+        return MA_INVALID_ARGS;
+    }
+    if (pFormat) {
+        *pFormat = src->stream.format == naw::desktop_pet::service::utils::AudioFormat::S16 ? ma_format_s16 : ma_format_f32;
+    }
+    if (pChannels) {
+        *pChannels = src->stream.channels;
+    }
+    if (pSampleRate) {
+        *pSampleRate = src->stream.sampleRate;
+    }
+    return MA_SUCCESS;
+}
+
+static ma_data_source_vtable g_streamVTable{
+    streamRead,
+    nullptr,            // onSeek
+    streamGetDataFormat,
+    nullptr,            // onGetCursor
+    nullptr             // onGetLength
+};
+
+static StreamSource* createStreamSource(const naw::desktop_pet::service::utils::AudioStreamConfig& stream, std::size_t bufferFrames) {
+    if (stream.sampleRate == 0 || stream.channels == 0) {
+        return nullptr;
+    }
+
+    auto* src = new StreamSource();
+    src->stream = stream;
+    src->bytesPerFrame = ma_get_bytes_per_sample(stream.format == naw::desktop_pet::service::utils::AudioFormat::S16 ? ma_format_s16 : ma_format_f32) * stream.channels;
+
+    ma_data_source_config dsCfg = ma_data_source_config_init();
+    dsCfg.vtable = &g_streamVTable;
+    if (ma_data_source_init(&dsCfg, &src->base) != MA_SUCCESS) {
+        delete src;
+        return nullptr;
+    }
+
+    // Cast buffer size to the expected width; caller ensures it fits.
+    if (ma_pcm_rb_init(stream.format == naw::desktop_pet::service::utils::AudioFormat::S16 ? ma_format_s16 : ma_format_f32,
+                       stream.channels,
+                       static_cast<ma_uint32>(bufferFrames),
+                       nullptr,
+                       nullptr,
+                       &src->rb) != MA_SUCCESS) {
+        ma_data_source_uninit(&src->base);
+        delete src;
+        return nullptr;
+    }
+
+    return src;
+}
+
+static void destroyStreamSource(StreamSource* src) {
+    if (src == nullptr) {
+        return;
+    }
+    ma_pcm_rb_uninit(&src->rb);
+    ma_data_source_uninit(&src->base);
+    delete src;
+}
 } // namespace
 
 namespace naw::desktop_pet::service::utils {
@@ -158,6 +292,96 @@ std::optional<std::uint32_t> AudioProcessor::playMemory(const void* data, std::s
     return id;
 }
 
+std::optional<std::uint32_t> AudioProcessor::startStream(const AudioStreamConfig& stream,
+                                                         std::size_t bufferFrames,
+                                                         const PlaybackOptions& opts) {
+    if (!initialized_) {
+        return std::nullopt;
+    }
+    AudioStreamConfig cfg = stream;
+    if (cfg.sampleRate == 0) {
+        cfg.sampleRate = playbackConfig_.sampleRate != 0 ? playbackConfig_.sampleRate : 48000;
+    }
+    if (cfg.channels == 0) {
+        cfg.channels = playbackConfig_.channels != 0 ? playbackConfig_.channels : 2;
+    }
+    const auto bpf = frameSizeBytes(cfg);
+    if (bpf == 0 || bufferFrames == 0) {
+        return std::nullopt;
+    }
+
+    auto* src = createStreamSource(cfg, bufferFrames);
+    if (src == nullptr) {
+        return std::nullopt;
+    }
+
+    auto* sound = new ma_sound();
+    if (ma_sound_init_from_data_source(toEngine(engine_), &src->base, MA_SOUND_FLAG_DECODE, nullptr, sound) != MA_SUCCESS) {
+        destroyStreamSource(src);
+        delete sound;
+        return std::nullopt;
+    }
+
+    ma_sound_set_looping(sound, opts.loop ? MA_TRUE : MA_FALSE);
+    ma_sound_set_volume(sound, opts.volume);
+
+    const auto id = nextSoundId_.fetch_add(1);
+    addSoundHandle(id, sound);
+    {
+        std::lock_guard<std::mutex> lock(soundMutex_);
+        auto it = sounds_.find(id);
+        if (it != sounds_.end()) {
+            it->second->streamSource = src;
+        }
+    }
+    ma_sound_start(sound);
+    return id;
+}
+
+bool AudioProcessor::appendStreamData(std::uint32_t soundId, const void* pcm, std::size_t bytes) {
+    if (pcm == nullptr || bytes == 0) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(soundMutex_);
+    auto it = sounds_.find(soundId);
+    if (it == sounds_.end() || it->second->streamSource == nullptr) {
+        return false;
+    }
+    auto* src = reinterpret_cast<StreamSource*>(it->second->streamSource);
+    if (bytes % src->bytesPerFrame != 0) {
+        return false;
+    }
+    const ma_uint64 frames = static_cast<ma_uint64>(bytes / src->bytesPerFrame);
+    const ma_uint64 writable = ma_pcm_rb_available_write(&src->rb);
+    if (writable < frames) {
+        return false; // 缓冲不足，调用方可重试
+    }
+
+    ma_uint64 totalWritten = 0;
+    const auto* srcBytes = static_cast<const std::uint8_t*>(pcm);
+    while (totalWritten < frames) {
+        ma_uint32 acquire = static_cast<ma_uint32>(frames - totalWritten);
+        void* pWrite = nullptr;
+        if (ma_pcm_rb_acquire_write(&src->rb, &acquire, &pWrite) != MA_SUCCESS || pWrite == nullptr || acquire == 0) {
+            break;
+        }
+        std::memcpy(pWrite, srcBytes + totalWritten * src->bytesPerFrame, static_cast<std::size_t>(acquire) * src->bytesPerFrame);
+        ma_pcm_rb_commit_write(&src->rb, acquire);
+        totalWritten += acquire;
+    }
+    return totalWritten == frames;
+}
+
+void AudioProcessor::finishStream(std::uint32_t soundId) {
+    std::lock_guard<std::mutex> lock(soundMutex_);
+    auto it = sounds_.find(soundId);
+    if (it == sounds_.end() || it->second->streamSource == nullptr) {
+        return;
+    }
+    auto* src = reinterpret_cast<StreamSource*>(it->second->streamSource);
+    src->finished.store(true, std::memory_order_relaxed);
+}
+
 bool AudioProcessor::pause(std::uint32_t soundId) {
     std::lock_guard<std::mutex> lock(soundMutex_);
     auto it = sounds_.find(soundId);
@@ -206,6 +430,9 @@ bool AudioProcessor::stop(std::uint32_t soundId) {
     if (handle->decoder != nullptr) {
         ma_decoder_uninit(reinterpret_cast<ma_decoder*>(handle->decoder));
         delete reinterpret_cast<ma_decoder*>(handle->decoder);
+    }
+    if (handle->streamSource != nullptr) {
+        destroyStreamSource(reinterpret_cast<StreamSource*>(handle->streamSource));
     }
     return true;
 }
