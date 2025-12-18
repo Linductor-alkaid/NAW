@@ -1,0 +1,63 @@
+{
+  "_comment": "NAW System AI Service 配置模板（Phase1: ConfigManager）。JSON 不支持注释，因此用 _comment 字段说明。",
+  "api": {
+    "_comment": "base_url 默认使用 .cn 域名；api_key 推荐通过环境变量注入，避免明文落盘。",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "api_key": "${SILICONFLOW_API_KEY}",
+    "default_timeout_ms": 30000
+  },
+  "models": [
+    {
+      "_comment": "模型配置为示例；实际可用模型/ID 请以 SiliconFlow 平台为准。",
+      "model_id": "deepseek-ai/DeepSeek-V3",
+      "display_name": "DeepSeek V3",
+      "supported_tasks": [
+        "CodeGeneration",
+        "CodeAnalysis",
+        "TechnicalQnA"
+      ],
+      "supports_streaming": true,
+      "default_temperature": 0.7,
+      "default_max_tokens": 4096
+    }
+  ],
+  "routing": {
+    "_comment": "任务到默认模型映射；fallback_model 用于找不到任务映射时回退。",
+    "default_model_per_task": {
+      "CodeGeneration": "deepseek-ai/DeepSeek-V3",
+      "CodeAnalysis": "deepseek-ai/DeepSeek-V3"
+    },
+    "fallback_model": "deepseek-ai/DeepSeek-V3"
+  },
+  "context": {
+    "_comment": "上下文管理（Phase1 先预留字段；后续模块可读取）。",
+    "max_history_messages": 50,
+    "max_context_tokens": 60000
+  },
+  "request_management": {
+    "_comment": "请求管理（Phase1 先预留字段；后续 RequestManager 可读取）。",
+    "max_queue_size": 100,
+    "default_timeout_ms": 30000,
+    "max_retries": 3,
+    "retry_delay_ms": 1000,
+    "retry_backoff_multiplier": 2.0
+  },
+  "cache": {
+    "_comment": "缓存（Phase1 先预留字段）。",
+    "enabled": true,
+    "default_ttl_seconds": 3600,
+    "max_cache_size": 1000
+  },
+  "logging": {
+    "_comment": "日志控制（Phase1 先预留字段）。",
+    "level": "info",
+    "log_requests": true,
+    "log_responses": false,
+    "log_errors": true
+  },
+  "tools": {
+    "_comment": "工具系统配置；PROJECT_ROOT 可通过环境变量注入。",
+    "project_root": "${PROJECT_ROOT}"
+  }
+}
+

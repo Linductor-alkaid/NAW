@@ -4,11 +4,13 @@ option(BUILD_SERVICE_FOUNDATION_TESTING "Build service foundation tests" OFF)
 
 set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ErrorHandler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ConfigManager.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorHandler.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ConfigManager.h
 )
 
 add_library(NAW_ServiceFoundation STATIC
@@ -49,5 +51,16 @@ if(BUILD_TESTING)
     target_link_libraries(ErrorHandlerTest PRIVATE NAW_ServiceFoundation NAW_ServiceUtils)
     target_include_directories(ErrorHandlerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME ErrorHandlerTest COMMAND ErrorHandlerTest)
+
+    add_executable(ConfigManagerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ConfigManagerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ConfigManagerTest PRIVATE /GL-)
+        target_link_options(ConfigManagerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ConfigManagerTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(ConfigManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME ConfigManagerTest COMMAND ConfigManagerTest)
 endif()
 
