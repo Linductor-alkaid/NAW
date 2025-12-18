@@ -4,9 +4,12 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <condition_variable>
+#include <chrono>
 #include <vector>
 
 using namespace naw::desktop_pet::service;
@@ -82,6 +85,22 @@ static bool containsAny(const std::vector<std::string>& xs, const std::string& n
         if (x.find(needle) != std::string::npos) return true;
     }
     return false;
+}
+
+static void setEnvVar(const std::string& k, const std::string& v) {
+#if defined(_WIN32)
+    _putenv_s(k.c_str(), v.c_str());
+#else
+    setenv(k.c_str(), v.c_str(), 1);
+#endif
+}
+
+static void unsetEnvVar(const std::string& k) {
+#if defined(_WIN32)
+    _putenv_s(k.c_str(), "");
+#else
+    unsetenv(k.c_str());
+#endif
 }
 
 int main() {
@@ -178,6 +197,113 @@ int main() {
         CHECK_TRUE(cm.loadFromString(R"({"api":{"base_url":"https://api.siliconflow.cn/v1","api_key":""},"models":[]})", &err));
         const auto issues = cm.validate();
         CHECK_TRUE(containsAny(issues, "api.api_key"));
+    }});
+
+    tests.push_back({"env_placeholder_replacement", []() {
+        unsetEnvVar("TEST_PLACEHOLDER_KEY");
+        setEnvVar("TEST_PLACEHOLDER_KEY", "abc123");
+
+        ConfigManager cm;
+        ErrorInfo err;
+        CHECK_TRUE(cm.loadFromString(
+            R"({"api":{"base_url":"https://api.siliconflow.cn/v1","api_key":"${TEST_PLACEHOLDER_KEY}","default_timeout_ms":1},"models":[]})",
+            &err));
+        auto v = cm.get("api.api_key");
+        CHECK_TRUE(v.has_value());
+        CHECK_EQ(v->get<std::string>(), "abc123");
+    }});
+
+    tests.push_back({"env_mapping_override_api_key", []() {
+        setEnvVar("SILICONFLOW_API_KEY", "override_key");
+
+        ConfigManager cm;
+        ErrorInfo err;
+        // even if json provides a different key, env mapping should override
+        CHECK_TRUE(cm.loadFromString(
+            R"({"api":{"base_url":"https://api.siliconflow.cn/v1","api_key":"json_key","default_timeout_ms":1},"models":[]})",
+            &err));
+        auto v = cm.get("api.api_key");
+        CHECK_TRUE(v.has_value());
+        CHECK_EQ(v->get<std::string>(), "override_key");
+    }});
+
+    tests.push_back({"validate_routing_task_key_must_be_tasktype", []() {
+        ConfigManager cm;
+        ErrorInfo err;
+        CHECK_TRUE(cm.loadFromString(
+            R"({"api":{"base_url":"https://api.siliconflow.cn/v1","api_key":"k","default_timeout_ms":1},)"
+            R"("models":[{"model_id":"m1","supported_tasks":[]}],)"
+            R"("routing":{"default_model_per_task":{"NotATask":"m1"}}})",
+            &err));
+        const auto issues = cm.validate();
+        CHECK_TRUE(containsAny(issues, "Invalid routing task type key"));
+    }});
+
+    tests.push_back({"hot_reload_success_and_rollback", []() {
+        ConfigManager cm;
+        ErrorInfo err;
+
+        const std::string path = "hot_reload_test_config.json";
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+
+        // initial valid config
+        {
+            std::ofstream ofs(path, std::ios::out | std::ios::binary | std::ios::trunc);
+            CHECK_TRUE(ofs.is_open());
+            ofs << R"({"api":{"base_url":"https://api.siliconflow.cn/v1","api_key":"k","default_timeout_ms":1},"models":[]})";
+        }
+        CHECK_TRUE(cm.loadFromFile(path, &err));
+
+        std::mutex mu;
+        std::condition_variable cv;
+        int callbacks = 0;
+
+        ConfigManager::WatchOptions opt;
+        opt.pollInterval = std::chrono::milliseconds(30);
+        opt.debounce = std::chrono::milliseconds(30);
+
+        CHECK_TRUE(cm.startWatchingFile(path, opt,
+                                       [&](const nlohmann::json& newCfg, const std::vector<std::string>&) {
+                                           (void)newCfg;
+                                           std::lock_guard<std::mutex> lk(mu);
+                                           callbacks++;
+                                           cv.notify_all();
+                                       },
+                                       &err));
+
+        // modify to a new valid config
+        {
+            std::ofstream ofs(path, std::ios::out | std::ios::binary | std::ios::trunc);
+            CHECK_TRUE(ofs.is_open());
+            ofs << R"({"api":{"base_url":"https://changed","api_key":"k","default_timeout_ms":1},"models":[]})";
+        }
+
+        {
+            std::unique_lock<std::mutex> lk(mu);
+            CHECK_TRUE(cv.wait_for(lk, std::chrono::seconds(2), [&] { return callbacks >= 1; }));
+        }
+        auto baseUrl = cm.get("api.base_url");
+        CHECK_TRUE(baseUrl.has_value());
+        CHECK_EQ(baseUrl->get<std::string>(), "https://changed");
+
+        // now write invalid json, should rollback (keep old config)
+        {
+            std::ofstream ofs(path, std::ios::out | std::ios::binary | std::ios::trunc);
+            CHECK_TRUE(ofs.is_open());
+            ofs << R"({"api":)";
+        }
+
+        // wait a bit to let watcher process
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+        auto baseUrl2 = cm.get("api.base_url");
+        CHECK_TRUE(baseUrl2.has_value());
+        CHECK_EQ(baseUrl2->get<std::string>(), "https://changed");
+        CHECK_TRUE(!cm.getLastReloadError().empty());
+
+        cm.stopWatching();
+        std::filesystem::remove(path, ec);
     }});
 
     tests.push_back({"redact_sensitive", []() {

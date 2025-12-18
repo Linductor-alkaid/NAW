@@ -2,9 +2,15 @@
 
 #include "naw/desktop_pet/service/ErrorTypes.h"
 
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -23,6 +29,7 @@ namespace naw::desktop_pet::service {
 class ConfigManager {
 public:
     ConfigManager();
+    ~ConfigManager();
 
     // 从文件加载；
     // - 文件存在：读取并解析
@@ -56,6 +63,27 @@ public:
     // keyPath 命中敏感字段时，对 value 脱敏
     static std::string redactSensitive(const std::string& keyPath, const std::string& value);
 
+    // =========================
+    // Hot Reload (optional)
+    // =========================
+    struct WatchOptions {
+        // 轮询间隔（越小越实时，但更耗资源）
+        std::chrono::milliseconds pollInterval{250};
+        // 防抖时间：检测到文件变化后，等待一段时间确保写入完成
+        std::chrono::milliseconds debounce{300};
+    };
+
+    using ReloadCallback = std::function<void(const nlohmann::json& newConfig,
+                                              const std::vector<std::string>& validationIssues)>;
+
+    // 启动对指定配置文件的热重载监控；若已在监控，则会先停止旧监控再启动新的
+    bool startWatchingFile(const std::string& path, const WatchOptions& opt, ReloadCallback cb, ErrorInfo* err = nullptr);
+    void stopWatching();
+    bool isWatching() const;
+
+    // 最近一次热重载失败原因（为空表示最近一次成功或尚未发生失败）
+    std::string getLastReloadError() const;
+
 private:
     mutable std::mutex m_mu;
     nlohmann::json m_cfg;
@@ -70,8 +98,22 @@ private:
     static void applyEnvMappingOverrides(nlohmann::json& root);
     static void replaceEnvPlaceholdersRecursive(nlohmann::json& node);
     static std::string replaceEnvPlaceholdersInString(const std::string& s);
+    static std::vector<std::string> validateJson(const nlohmann::json& cfgCopy);
+    static bool hasHardValidationErrors(const std::vector<std::string>& issues);
 
     static bool startsWith(const std::string& s, const std::string& prefix);
+
+    // Watcher runtime
+    mutable std::mutex m_watchMu;
+    std::condition_variable m_watchCv;
+    std::thread m_watchThread;
+    std::atomic<bool> m_watchStop{false};
+    bool m_watching{false};
+    std::string m_watchPath;
+    WatchOptions m_watchOpt{};
+    ReloadCallback m_reloadCb{};
+    std::filesystem::file_time_type m_lastWriteTime{};
+    std::string m_lastReloadError;
 };
 
 } // namespace naw::desktop_pet::service

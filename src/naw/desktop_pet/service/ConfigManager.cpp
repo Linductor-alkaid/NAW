@@ -1,8 +1,11 @@
 #include "naw/desktop_pet/service/ConfigManager.h"
 
+#include "naw/desktop_pet/service/types/TaskType.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -20,6 +23,27 @@ static std::string trimCopy(std::string s) {
 ConfigManager::ConfigManager()
     : m_cfg(makeDefaultConfig())
 {}
+
+ConfigManager::~ConfigManager() {
+    stopWatching();
+}
+
+static bool readFileToString(const std::string& path, std::string& out, std::string& errMsg) {
+    try {
+        std::ifstream ifs(path, std::ios::in | std::ios::binary);
+        if (!ifs.is_open()) {
+            errMsg = "Failed to open file: " + path;
+            return false;
+        }
+        std::stringstream buffer;
+        buffer << ifs.rdbuf();
+        out = buffer.str();
+        return true;
+    } catch (const std::exception& e) {
+        errMsg = std::string("Failed to read file: ") + e.what();
+        return false;
+    }
+}
 
 bool ConfigManager::loadFromFile(const std::string& path, ErrorInfo* err) {
     std::ifstream ifs(path, std::ios::in | std::ios::binary);
@@ -192,95 +216,7 @@ void ConfigManager::applyEnvironmentOverrides() {
 }
 
 std::vector<std::string> ConfigManager::validate() const {
-    nlohmann::json cfgCopy = getRaw();
-    std::vector<std::string> out;
-
-    // api
-    if (!cfgCopy.contains("api") || !cfgCopy["api"].is_object()) {
-        out.push_back("Missing or invalid 'api' object");
-        return out;
-    }
-    const auto& api = cfgCopy["api"];
-    if (!api.contains("base_url") || !api["base_url"].is_string() || trimCopy(api["base_url"].get<std::string>()).empty()) {
-        out.push_back("Missing or invalid 'api.base_url' (string required)");
-    } else {
-        const auto baseUrl = trimCopy(api["base_url"].get<std::string>());
-        if (!(startsWith(baseUrl, "http://") || startsWith(baseUrl, "https://"))) {
-            out.push_back("Invalid 'api.base_url' (must start with http:// or https://)");
-        }
-    }
-
-    if (!api.contains("api_key") || !api["api_key"].is_string()) {
-        out.push_back("Missing or invalid 'api.api_key' (string required)");
-    } else {
-        const auto key = trimCopy(api["api_key"].get<std::string>());
-        if (key.empty()) {
-            out.push_back("Invalid 'api.api_key' (empty)");
-        } else if (startsWith(key, "${") && key.find('}') != std::string::npos) {
-            // 仍为占位符，通常意味着 env 未提供
-            out.push_back("Invalid 'api.api_key' (unresolved env placeholder): " + redactSensitive("api.api_key", key));
-        }
-    }
-
-    if (api.contains("default_timeout_ms")) {
-        if (!api["default_timeout_ms"].is_number_integer()) {
-            out.push_back("Invalid 'api.default_timeout_ms' (integer required)");
-        } else {
-            const auto t = api["default_timeout_ms"].get<long long>();
-            if (t <= 0 || t > 300000) out.push_back("Invalid 'api.default_timeout_ms' (range 1..300000)");
-        }
-    }
-
-    // models
-    std::set<std::string> modelIds;
-    if (cfgCopy.contains("models")) {
-        if (!cfgCopy["models"].is_array()) {
-            out.push_back("Invalid 'models' (array required)");
-        } else {
-            for (size_t i = 0; i < cfgCopy["models"].size(); ++i) {
-                const auto& m = cfgCopy["models"][i];
-                if (!m.is_object()) {
-                    out.push_back("Invalid 'models[" + std::to_string(i) + "]' (object required)");
-                    continue;
-                }
-                if (!m.contains("model_id") || !m["model_id"].is_string() || trimCopy(m["model_id"].get<std::string>()).empty()) {
-                    out.push_back("Missing or invalid 'models[" + std::to_string(i) + "].model_id'");
-                } else {
-                    modelIds.insert(trimCopy(m["model_id"].get<std::string>()));
-                }
-                if (!m.contains("supported_tasks") || !m["supported_tasks"].is_array()) {
-                    out.push_back("Missing or invalid 'models[" + std::to_string(i) + "].supported_tasks' (array required)");
-                }
-            }
-        }
-    } else {
-        out.push_back("Missing 'models' (array required)");
-    }
-
-    // routing.default_model_per_task
-    if (cfgCopy.contains("routing")) {
-        if (!cfgCopy["routing"].is_object()) {
-            out.push_back("Invalid 'routing' (object required)");
-        } else if (cfgCopy["routing"].contains("default_model_per_task")) {
-            const auto& d = cfgCopy["routing"]["default_model_per_task"];
-            if (!d.is_object()) {
-                out.push_back("Invalid 'routing.default_model_per_task' (object required)");
-            } else {
-                for (auto it = d.begin(); it != d.end(); ++it) {
-                    if (!it.value().is_string()) {
-                        out.push_back("Invalid routing mapping for task '" + it.key() + "' (string model_id required)");
-                        continue;
-                    }
-                    const auto mid = trimCopy(it.value().get<std::string>());
-                    if (!mid.empty() && !modelIds.empty() && modelIds.find(mid) == modelIds.end()) {
-                        out.push_back("WARN: routing.default_model_per_task[" + it.key() + "] refers to unknown model_id: " + mid);
-                    }
-                }
-            }
-        }
-    }
-
-    return out;
+    return validateJson(getRaw());
 }
 
 nlohmann::json ConfigManager::makeDefaultConfig() {
@@ -292,6 +228,36 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
         {"base_url", "https://api.siliconflow.cn/v1"},
         {"api_key", "${SILICONFLOW_API_KEY}"},
         {"default_timeout_ms", 30000}
+    };
+    j["multimodal"] = {
+        {"_comment", "Optional multimodal providers. This node only defines configuration structure; calling logic is implemented in later phases."},
+        {"stt",
+         {
+             {"enabled", false},
+             {"_comment", "Speech-to-Text provider/model. api_key can be injected via env (e.g. SILICONFLOW_API_KEY) or a dedicated env var."},
+             {"provider", "siliconflow"},
+             {"base_url", "${SILICONFLOW_BASE_URL}"},
+             {"api_key", "${SILICONFLOW_API_KEY}"},
+             {"model_id", ""}
+         }},
+        {"tts",
+         {
+             {"enabled", false},
+             {"_comment", "Text-to-Speech provider/model."},
+             {"provider", "siliconflow"},
+             {"base_url", "${SILICONFLOW_BASE_URL}"},
+             {"api_key", "${SILICONFLOW_API_KEY}"},
+             {"model_id", ""}
+         }},
+        {"vlm",
+         {
+             {"enabled", false},
+             {"_comment", "Vision-Language Model provider/model."},
+             {"provider", "siliconflow"},
+             {"base_url", "${SILICONFLOW_BASE_URL}"},
+             {"api_key", "${SILICONFLOW_API_KEY}"},
+             {"model_id", ""}
+         }},
     };
     j["models"] = nlohmann::json::array({
         {
@@ -392,6 +358,10 @@ void ConfigManager::applyEnvMappingOverrides(nlohmann::json& root) {
         {"SILICONFLOW_API_KEY", "api.api_key"},
         {"SILICONFLOW_BASE_URL", "api.base_url"},
         {"PROJECT_ROOT", "tools.project_root"},
+        // optional but handy
+        {"SILICONFLOW_DEFAULT_TIMEOUT_MS", "api.default_timeout_ms"},
+        {"SILICONFLOW_FALLBACK_MODEL", "routing.fallback_model"},
+        {"SILICONFLOW_DEFAULT_MODEL_CODEGEN", "routing.default_model_per_task.CodeGeneration"},
     };
 
     for (const auto& m : mapping) {
@@ -402,7 +372,19 @@ void ConfigManager::applyEnvMappingOverrides(nlohmann::json& root) {
         if (val.empty()) continue;
         const auto parts = splitKeyPath(m.keyPath);
         nlohmann::json* p = getOrCreatePtrByPath(root, parts);
-        if (p) *p = val;
+        if (!p) continue;
+        // try to preserve numeric type for known integer field
+        if (std::string(m.keyPath) == "api.default_timeout_ms") {
+            try {
+                const long long t = std::stoll(val);
+                *p = t;
+            } catch (...) {
+                // fallback to string if parse fails (validate() will catch)
+                *p = val;
+            }
+        } else {
+            *p = val;
+        }
     }
 }
 
@@ -450,8 +432,283 @@ std::string ConfigManager::replaceEnvPlaceholdersInString(const std::string& s) 
     return out;
 }
 
+std::vector<std::string> ConfigManager::validateJson(const nlohmann::json& cfgCopy) {
+    std::vector<std::string> out;
+
+    // api
+    if (!cfgCopy.contains("api") || !cfgCopy["api"].is_object()) {
+        out.push_back("Missing or invalid 'api' object");
+        return out;
+    }
+    const auto& api = cfgCopy["api"];
+    if (!api.contains("base_url") || !api["base_url"].is_string() || trimCopy(api["base_url"].get<std::string>()).empty()) {
+        out.push_back("Missing or invalid 'api.base_url' (string required)");
+    } else {
+        const auto baseUrl = trimCopy(api["base_url"].get<std::string>());
+        if (!(startsWith(baseUrl, "http://") || startsWith(baseUrl, "https://"))) {
+            out.push_back("Invalid 'api.base_url' (must start with http:// or https://)");
+        }
+    }
+
+    if (!api.contains("api_key") || !api["api_key"].is_string()) {
+        out.push_back("Missing or invalid 'api.api_key' (string required)");
+    } else {
+        const auto key = trimCopy(api["api_key"].get<std::string>());
+        if (key.empty()) {
+            out.push_back("Invalid 'api.api_key' (empty)");
+        } else if (startsWith(key, "${") && key.find('}') != std::string::npos) {
+            // 仍为占位符，通常意味着 env 未提供
+            out.push_back("Invalid 'api.api_key' (unresolved env placeholder): " + redactSensitive("api.api_key", key));
+        }
+    }
+
+    if (api.contains("default_timeout_ms")) {
+        if (!api["default_timeout_ms"].is_number_integer()) {
+            out.push_back("Invalid 'api.default_timeout_ms' (integer required)");
+        } else {
+            const auto t = api["default_timeout_ms"].get<long long>();
+            if (t <= 0 || t > 300000) out.push_back("Invalid 'api.default_timeout_ms' (range 1..300000)");
+        }
+    }
+
+    // models
+    std::set<std::string> modelIds;
+    if (cfgCopy.contains("models")) {
+        if (!cfgCopy["models"].is_array()) {
+            out.push_back("Invalid 'models' (array required)");
+        } else {
+            for (size_t i = 0; i < cfgCopy["models"].size(); ++i) {
+                const auto& m = cfgCopy["models"][i];
+                if (!m.is_object()) {
+                    out.push_back("Invalid 'models[" + std::to_string(i) + "]' (object required)");
+                    continue;
+                }
+                if (!m.contains("model_id") || !m["model_id"].is_string() || trimCopy(m["model_id"].get<std::string>()).empty()) {
+                    out.push_back("Missing or invalid 'models[" + std::to_string(i) + "].model_id'");
+                } else {
+                    modelIds.insert(trimCopy(m["model_id"].get<std::string>()));
+                }
+                if (!m.contains("supported_tasks") || !m["supported_tasks"].is_array()) {
+                    out.push_back("Missing or invalid 'models[" + std::to_string(i) + "].supported_tasks' (array required)");
+                }
+            }
+        }
+    } else {
+        out.push_back("Missing 'models' (array required)");
+    }
+
+    // routing.default_model_per_task
+    if (cfgCopy.contains("routing")) {
+        if (!cfgCopy["routing"].is_object()) {
+            out.push_back("Invalid 'routing' (object required)");
+        } else if (cfgCopy["routing"].contains("default_model_per_task")) {
+            const auto& d = cfgCopy["routing"]["default_model_per_task"];
+            if (!d.is_object()) {
+                out.push_back("Invalid 'routing.default_model_per_task' (object required)");
+            } else {
+                for (auto it = d.begin(); it != d.end(); ++it) {
+                    if (!it.value().is_string()) {
+                        out.push_back("Invalid routing mapping for task '" + it.key() + "' (string model_id required)");
+                        continue;
+                    }
+
+                    // task key must be a valid TaskType (case-insensitive)
+                    if (!naw::desktop_pet::service::types::stringToTaskType(it.key()).has_value()) {
+                        out.push_back("Invalid routing task type key: " + it.key());
+                    }
+
+                    const auto mid = trimCopy(it.value().get<std::string>());
+                    if (!mid.empty() && !modelIds.empty() && modelIds.find(mid) == modelIds.end()) {
+                        out.push_back("WARN: routing.default_model_per_task[" + it.key() + "] refers to unknown model_id: " + mid);
+                    }
+                }
+            }
+        }
+    }
+
+    return out;
+}
+
+bool ConfigManager::hasHardValidationErrors(const std::vector<std::string>& issues) {
+    for (const auto& s : issues) {
+        if (!startsWith(s, "WARN:")) return true;
+    }
+    return false;
+}
+
 bool ConfigManager::startsWith(const std::string& s, const std::string& prefix) {
     return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+bool ConfigManager::startWatchingFile(const std::string& path, const WatchOptions& opt, ReloadCallback cb, ErrorInfo* err) {
+    stopWatching();
+    if (trimCopy(path).empty()) {
+        if (err) {
+            err->errorType = ErrorType::InvalidRequest;
+            err->errorCode = 0;
+            err->message = "Empty config watch path";
+        }
+        return false;
+    }
+
+    // Prime last_write_time if file exists; if not, we still allow watching (will reload once it appears/changes)
+    std::filesystem::file_time_type initialTime{};
+    {
+        std::error_code ec;
+        initialTime = std::filesystem::exists(path, ec) ? std::filesystem::last_write_time(path, ec)
+                                                       : std::filesystem::file_time_type{};
+    }
+
+    {
+        std::lock_guard<std::mutex> lk(m_watchMu);
+        m_watchStop.store(false);
+        m_watching = true;
+        m_watchPath = path;
+        m_watchOpt = opt;
+        m_reloadCb = std::move(cb);
+        m_lastWriteTime = initialTime;
+        m_lastReloadError.clear();
+    }
+
+    m_watchThread = std::thread([this]() {
+        std::string path;
+        WatchOptions opt;
+        ReloadCallback cb;
+        std::filesystem::file_time_type lastTime{};
+        {
+            std::lock_guard<std::mutex> lk(m_watchMu);
+            path = m_watchPath;
+            opt = m_watchOpt;
+            cb = m_reloadCb;
+            lastTime = m_lastWriteTime;
+        }
+
+        bool pending = false;
+        std::filesystem::file_time_type candidateTime{};
+        auto pendingSince = std::chrono::steady_clock::now();
+
+        while (!m_watchStop.load()) {
+            // Wait for poll interval or stop signal
+            {
+                std::unique_lock<std::mutex> lk(m_watchMu);
+                m_watchCv.wait_for(lk, opt.pollInterval, [this]() { return m_watchStop.load(); });
+                if (m_watchStop.load()) break;
+            }
+
+            std::error_code ec;
+            const bool exists = std::filesystem::exists(path, ec);
+            const auto nowTime = (exists && !ec) ? std::filesystem::last_write_time(path, ec) : std::filesystem::file_time_type{};
+            if (ec) {
+                // ignore transient fs errors
+                continue;
+            }
+
+            if (nowTime != lastTime) {
+                // file changed (or appeared/disappeared)
+                if (!pending) {
+                    pending = true;
+                    candidateTime = nowTime;
+                    pendingSince = std::chrono::steady_clock::now();
+                } else {
+                    // if it keeps changing, extend debounce window
+                    if (nowTime != candidateTime) {
+                        candidateTime = nowTime;
+                        pendingSince = std::chrono::steady_clock::now();
+                    }
+                }
+            }
+
+            if (pending) {
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - pendingSince);
+                if (elapsed >= opt.debounce) {
+                    // Ensure file time is stable
+                    std::error_code ec2;
+                    const bool exists2 = std::filesystem::exists(path, ec2);
+                    const auto stableTime = (exists2 && !ec2) ? std::filesystem::last_write_time(path, ec2) : std::filesystem::file_time_type{};
+                    if (!ec2 && stableTime == candidateTime) {
+                        // attempt reload
+                        std::string text;
+                        std::string readErr;
+                        if (!readFileToString(path, text, readErr)) {
+                            std::lock_guard<std::mutex> lk(m_watchMu);
+                            m_lastReloadError = readErr;
+                        } else {
+                            nlohmann::json parsed;
+                            std::vector<std::string> issues;
+                            try {
+                                parsed = nlohmann::json::parse(text);
+                                if (!parsed.is_object()) {
+                                    throw std::runtime_error("Config root must be a JSON object");
+                                }
+                                applyEnvMappingOverrides(parsed);
+                                replaceEnvPlaceholdersRecursive(parsed);
+                                issues = validateJson(parsed);
+
+                                if (hasHardValidationErrors(issues)) {
+                                    std::lock_guard<std::mutex> lk(m_watchMu);
+                                    m_lastReloadError = "Validation failed";
+                                } else {
+                                    {
+                                        std::lock_guard<std::mutex> lk(m_mu);
+                                        m_cfg = parsed;
+                                    }
+                                    {
+                                        std::lock_guard<std::mutex> lk(m_watchMu);
+                                        m_lastReloadError.clear();
+                                    }
+                                    if (cb) {
+                                        cb(parsed, issues);
+                                    }
+                                    lastTime = stableTime;
+                                    {
+                                        std::lock_guard<std::mutex> lk(m_watchMu);
+                                        m_lastWriteTime = lastTime;
+                                    }
+                                }
+                            } catch (const std::exception& e) {
+                                std::lock_guard<std::mutex> lk(m_watchMu);
+                                m_lastReloadError = std::string("Reload failed: ") + e.what();
+                            }
+                        }
+
+                        // reset pending and update lastTime baseline even on failure? keep lastTime as-is to retry on next change.
+                        pending = false;
+                    }
+                }
+            }
+        }
+    });
+
+    return true;
+}
+
+void ConfigManager::stopWatching() {
+    {
+        std::lock_guard<std::mutex> lk(m_watchMu);
+        if (!m_watching) return;
+        m_watchStop.store(true);
+    }
+    m_watchCv.notify_all();
+    if (m_watchThread.joinable()) {
+        m_watchThread.join();
+    }
+    {
+        std::lock_guard<std::mutex> lk(m_watchMu);
+        m_watching = false;
+        m_watchPath.clear();
+        m_reloadCb = nullptr;
+        m_watchStop.store(false);
+    }
+}
+
+bool ConfigManager::isWatching() const {
+    std::lock_guard<std::mutex> lk(m_watchMu);
+    return m_watching;
+}
+
+std::string ConfigManager::getLastReloadError() const {
+    std::lock_guard<std::mutex> lk(m_watchMu);
+    return m_lastReloadError;
 }
 
 } // namespace naw::desktop_pet::service
