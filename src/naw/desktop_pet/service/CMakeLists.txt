@@ -1,7 +1,7 @@
 # Service Foundation 模块（ErrorHandler 等基础设施）
 
 option(BUILD_SERVICE_FOUNDATION_TESTING "Build service foundation tests" OFF)
-option(BUILD_APICLIENT_CHAT_EXAMPLE "Build api_client_chat_example" OFF)
+option(BUILD_APICLIENT_CHAT_EXAMPLE "Build api_client_chat_example" ON)
 
 set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ErrorHandler.cpp

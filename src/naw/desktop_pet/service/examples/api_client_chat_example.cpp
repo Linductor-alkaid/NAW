@@ -25,16 +25,52 @@ static void setupConsoleUtf8() {
     // 让 std::getline/std::cout 走 UTF-8（仅影响控制台 code page，不改变 std::string 的本质）
     SetConsoleCP(CP_UTF8);
     SetConsoleOutputCP(CP_UTF8);
+
+    // 关键：输入侧尽量走 UTF-16（wcin），避免 CP/IME 造成的多字节乱码。
+    // 仅对控制台输入生效；若 stdin 被重定向，此设置可能无效，但那种场景通常已是 UTF-8 文本流。
+    _setmode(_fileno(stdin), _O_U16TEXT);
+}
+
+static std::string utf8FromWide(const std::wstring& ws) {
+    if (ws.empty()) return {};
+    int u8len = WideCharToMultiByte(CP_UTF8,
+                                    0,
+                                    ws.data(),
+                                    static_cast<int>(ws.size()),
+                                    nullptr,
+                                    0,
+                                    nullptr,
+                                    nullptr);
+    if (u8len <= 0) return {};
+    std::string out;
+    out.resize(static_cast<size_t>(u8len));
+    WideCharToMultiByte(CP_UTF8,
+                        0,
+                        ws.data(),
+                        static_cast<int>(ws.size()),
+                        out.data(),
+                        u8len,
+                        nullptr,
+                        nullptr);
+    return out;
 }
 
 static std::string toUtf8FromConsole(const std::string& s) {
-    // 将当前 ANSI code page (CP_ACP) 的字节转成 UTF-8
+    // 将“当前控制台输入 code page”的字节转成 UTF-8。
+    // 注意：我们在 setupConsoleUtf8() 里已经把控制台切到 CP_UTF8，
+    // 这时 std::getline 读到的就是 UTF-8 字节，不应再做 CP_ACP 转换（会产生乱码）。
     if (s.empty()) return s;
-    int wlen = MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
+
+    const UINT cp = GetConsoleCP();
+    if (cp == CP_UTF8) {
+        return s;
+    }
+
+    int wlen = MultiByteToWideChar(cp, 0, s.data(), static_cast<int>(s.size()), nullptr, 0);
     if (wlen <= 0) return s;
     std::wstring ws;
     ws.resize(static_cast<size_t>(wlen));
-    MultiByteToWideChar(CP_ACP, 0, s.data(), static_cast<int>(s.size()), ws.data(), wlen);
+    MultiByteToWideChar(cp, 0, s.data(), static_cast<int>(s.size()), ws.data(), wlen);
 
     int u8len = WideCharToMultiByte(CP_UTF8, 0, ws.data(), wlen, nullptr, 0, nullptr, nullptr);
     if (u8len <= 0) return s;
@@ -42,6 +78,24 @@ static std::string toUtf8FromConsole(const std::string& s) {
     out.resize(static_cast<size_t>(u8len));
     WideCharToMultiByte(CP_UTF8, 0, ws.data(), wlen, out.data(), u8len, nullptr, nullptr);
     return out;
+}
+
+static bool readLineUtf8(std::string& out) {
+    out.clear();
+
+    // 如果是控制台输入：走宽字符读取，确保 IME/中文稳定
+    if (_isatty(_fileno(stdin))) {
+        std::wstring wline;
+        if (!std::getline(std::wcin, wline)) return false;
+        out = utf8FromWide(wline);
+        return true;
+    }
+
+    // stdin 重定向：按字节读取（通常是 UTF-8），并做一次基于 console CP 的兜底转换
+    std::string line;
+    if (!std::getline(std::cin, line)) return false;
+    out = toUtf8FromConsole(line);
+    return true;
 }
 
 static size_t utf8CompletePrefixLen(std::string_view s) {
@@ -147,6 +201,7 @@ static Utf8ConsoleWriter& stderrWriter() {
 static void setupConsoleUtf8() {}
 static std::string toUtf8FromConsole(const std::string& s) { return s; }
 static void writeUtf8ToConsole(std::string_view s) { std::cout << s; }
+static bool readLineUtf8(std::string& out) { return static_cast<bool>(std::getline(std::cin, out)); }
 #endif
 
 static void printHelp() {
@@ -193,9 +248,7 @@ int main() {
     std::string line;
     while (true) {
         std::cout << "\nYou> ";
-        if (!std::getline(std::cin, line)) break;
-        // 兜底：将控制台输入转换为 UTF-8（避免 JSON dump/parse 报 invalid UTF-8）
-        line = toUtf8FromConsole(line);
+        if (!readLineUtf8(line)) break;
         if (line == "/exit") break;
         if (line == "/help") {
             printHelp();
