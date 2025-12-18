@@ -43,10 +43,10 @@
 建议新增：
 ```
 include/naw/desktop_pet/service/
-└── SiliconFlowAPIClient.h
+└── APIClient.h
 
 src/naw/desktop_pet/service/
-└── SiliconFlowAPIClient.cpp
+└── APIClient.cpp
 ```
 
 ### 2.1.3 详细任务清单

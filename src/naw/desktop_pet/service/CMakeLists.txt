@@ -1,6 +1,7 @@
 # Service Foundation 模块（ErrorHandler 等基础设施）
 
 option(BUILD_SERVICE_FOUNDATION_TESTING "Build service foundation tests" OFF)
+option(BUILD_APICLIENT_CHAT_EXAMPLE "Build api_client_chat_example" OFF)
 
 set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ErrorHandler.cpp
@@ -11,6 +12,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ConfigManager.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/APIClient.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -43,6 +45,35 @@ set_target_properties(NAW_ServiceFoundation PROPERTIES
 )
 
 message(STATUS "Service Foundation module configured: NAW_ServiceFoundation")
+
+# APIClient（依赖 ServiceUtils 的 HttpClient，因此单独建库，避免形成循环依赖）
+add_library(NAW_ServiceAPIClient STATIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/APIClient.cpp
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/APIClient.h
+)
+
+target_link_libraries(NAW_ServiceAPIClient
+    PUBLIC
+        NAW_ServiceUtils
+)
+
+target_include_directories(NAW_ServiceAPIClient
+    PUBLIC
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/third_party/json/single_include
+)
+
+target_compile_options(NAW_ServiceAPIClient
+    PRIVATE
+        ${PROJECT_COMPILE_OPTIONS}
+        $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+set_target_properties(NAW_ServiceAPIClient PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+    CXX_EXTENSIONS OFF
+)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -112,5 +143,28 @@ if(BUILD_TESTING)
     target_link_libraries(TypesRequestResponseTest PRIVATE NAW_ServiceFoundation)
     target_include_directories(TypesRequestResponseTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME TypesRequestResponseTest COMMAND TypesRequestResponseTest)
+
+    add_executable(APIClientTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/APIClientTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(APIClientTest PRIVATE /GL-)
+        target_link_options(APIClientTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(APIClientTest PRIVATE NAW_ServiceAPIClient)
+    target_include_directories(APIClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME APIClientTest COMMAND APIClientTest)
+endif()
+
+if(BUILD_APICLIENT_CHAT_EXAMPLE)
+    add_executable(api_client_chat_example
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/api_client_chat_example.cpp
+    )
+    if(MSVC)
+        target_compile_options(api_client_chat_example PRIVATE /GL-)
+        target_link_options(api_client_chat_example PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(api_client_chat_example PRIVATE NAW_ServiceAPIClient)
+    target_include_directories(api_client_chat_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
 endif()
 
