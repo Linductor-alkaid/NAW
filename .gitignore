@@ -60,7 +60,7 @@ logs/
 .claude/
 
 # 用户配置
-config_user.json
+ai_service_config.json
 
 # 不忽略第三方库
 !third_party/

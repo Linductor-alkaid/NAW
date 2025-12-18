@@ -1,5 +1,7 @@
 #include "naw/desktop_pet/service/ConfigManager.h"
 
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <iostream>
 #include <sstream>
@@ -119,11 +121,55 @@ int main() {
     tests.push_back({"load_missing_file_falls_back_to_default", []() {
         ConfigManager cm;
         ErrorInfo err;
-        CHECK_TRUE(cm.loadFromFile("this_file_should_not_exist_123456789.json", &err));
+        const std::string path = "this_file_should_not_exist_123456789.json";
+        // 清理可能残留
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
+
+        CHECK_TRUE(cm.loadFromFile(path, &err));
         auto api = cm.get("api");
         CHECK_TRUE(api.has_value());
         CHECK_TRUE(api->is_object());
         CHECK_TRUE(!err.message.empty());
+
+        // 应自动生成文件（模板）
+        CHECK_TRUE(std::filesystem::exists(path));
+        std::ifstream ifs(path, std::ios::in | std::ios::binary);
+        CHECK_TRUE(ifs.is_open());
+        std::stringstream buf;
+        buf << ifs.rdbuf();
+        const auto j = nlohmann::json::parse(buf.str());
+        CHECK_TRUE(j.is_object());
+        CHECK_TRUE(j.contains("api"));
+        CHECK_TRUE(j["api"].contains("api_key"));
+        // 写盘时不应写入明文 key，应保留占位符
+        CHECK_EQ(j["api"]["api_key"].get<std::string>(), "${SILICONFLOW_API_KEY}");
+
+        // 测试结束清理
+        std::filesystem::remove(path, ec);
+    }});
+
+    tests.push_back({"auto_create_default_config_in_config_dir", []() {
+        ConfigManager cm;
+        ErrorInfo err;
+
+        const std::string path = "config/ai_service_config.json";
+        std::error_code ec;
+        // 先确保文件不存在
+        std::filesystem::remove(path, ec);
+
+        CHECK_TRUE(cm.loadFromFile(path, &err));
+        CHECK_TRUE(std::filesystem::exists(path));
+
+        std::ifstream ifs(path, std::ios::in | std::ios::binary);
+        CHECK_TRUE(ifs.is_open());
+        std::stringstream buf;
+        buf << ifs.rdbuf();
+        const auto j = nlohmann::json::parse(buf.str());
+        CHECK_TRUE(j.is_object());
+        CHECK_TRUE(j.contains("api"));
+        CHECK_TRUE(j["api"].contains("api_key"));
+        CHECK_EQ(j["api"]["api_key"].get<std::string>(), "${SILICONFLOW_API_KEY}");
     }});
 
     tests.push_back({"validate_catches_missing_api_key", []() {

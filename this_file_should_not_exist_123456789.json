@@ -1,0 +1,30 @@
+{
+  "_comment": "NAW System AI Service config template (auto-generated). JSON has no comments; use _comment fields.",
+  "api": {
+    "_comment": "api_key is recommended to be injected via env var, avoid plaintext on disk.",
+    "api_key": "${SILICONFLOW_API_KEY}",
+    "base_url": "https://api.siliconflow.cn/v1",
+    "default_timeout_ms": 30000
+  },
+  "models": [
+    {
+      "display_name": "DeepSeek V3",
+      "model_id": "deepseek-ai/DeepSeek-V3",
+      "supported_tasks": [
+        "CodeGeneration",
+        "CodeAnalysis",
+        "TechnicalQnA"
+      ],
+      "supports_streaming": true
+    }
+  ],
+  "routing": {
+    "default_model_per_task": {
+      "CodeGeneration": "deepseek-ai/DeepSeek-V3"
+    },
+    "fallback_model": "deepseek-ai/DeepSeek-V3"
+  },
+  "tools": {
+    "project_root": "${PROJECT_ROOT}"
+  }
+}

@@ -24,7 +24,9 @@ class ConfigManager {
 public:
     ConfigManager();
 
-    // 从文件加载；文件不存在时使用默认配置并返回 true（err 会给出提示）
+    // 从文件加载；
+    // - 文件存在：读取并解析
+    // - 文件不存在：回退默认配置，并（可选）自动生成配置文件
     bool loadFromFile(const std::string& path, ErrorInfo* err = nullptr);
 
     // 从 JSON 字符串加载；解析失败返回 false，且不覆盖旧配置
@@ -47,6 +49,9 @@ public:
 
     // 读取并返回默认配置（最小可用）
     static nlohmann::json makeDefaultConfig();
+
+    // 将当前配置写入文件（会创建父目录）。成功返回 true。
+    bool saveToFile(const std::string& path, ErrorInfo* err = nullptr) const;
 
     // keyPath 命中敏感字段时，对 value 脱敏
     static std::string redactSensitive(const std::string& keyPath, const std::string& value);

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -23,19 +24,36 @@ ConfigManager::ConfigManager()
 bool ConfigManager::loadFromFile(const std::string& path, ErrorInfo* err) {
     std::ifstream ifs(path, std::ios::in | std::ios::binary);
     if (!ifs.is_open()) {
+        // 1) 回退默认配置（内存）
         {
             std::lock_guard<std::mutex> lk(m_mu);
             m_cfg = makeDefaultConfig();
             applyEnvMappingOverrides(m_cfg);
             replaceEnvPlaceholdersRecursive(m_cfg);
         }
+
+        // 2) 自动生成配置文件（落盘）。注意：落盘的是“模板/默认值”，仍保持 ${SILICONFLOW_API_KEY} 占位符。
+        //    若用户本地已设置环境变量，内存中的 m_cfg 可能已被替换为明文；因此这里必须重新生成一份“未替换的模板”写盘。
+        {
+            ErrorInfo saveErr;
+            ConfigManager tmp;
+            // tmp 构造会加载默认配置，但不会应用 env。我们用默认配置直接写盘。
+            (void)tmp.saveToFile(path, &saveErr);
+            if (err && saveErr.errorCode != 0) {
+                // 合并提示，不影响 loadFromFile 的整体成功语义
+                if (!err->details.has_value()) err->details = nlohmann::json::object();
+                (*err->details)["auto_create_failed"] = saveErr.toJson();
+            }
+        }
+
         if (err) {
             err->errorType = ErrorType::UnknownError;
             err->errorCode = 0;
-            err->message = "Config file not found, using default config: " + path;
+            err->message = "Config file not found, using default config and auto-created template: " + path;
             err->details = nlohmann::json{
                 {"path", path},
-                {"fallback", "default_config"}
+                {"fallback", "default_config"},
+                {"auto_created", true}
             };
         }
         return true;
@@ -83,6 +101,52 @@ bool ConfigManager::loadFromString(const std::string& jsonText, ErrorInfo* err) 
 nlohmann::json ConfigManager::getRaw() const {
     std::lock_guard<std::mutex> lk(m_mu);
     return m_cfg;
+}
+
+bool ConfigManager::saveToFile(const std::string& path, ErrorInfo* err) const {
+    try {
+        const std::filesystem::path p(path);
+        const auto parent = p.parent_path();
+        if (!parent.empty()) {
+            std::error_code ec;
+            std::filesystem::create_directories(parent, ec);
+            // 若创建失败且目录仍不存在，视为失败
+            if (ec && !std::filesystem::exists(parent)) {
+                if (err) {
+                    err->errorType = ErrorType::UnknownError;
+                    err->errorCode = 1;
+                    err->message = "Failed to create config directory: " + parent.string();
+                    err->details = nlohmann::json{{"path", path}, {"ec", ec.value()}, {"what", ec.message()}};
+                }
+                return false;
+            }
+        }
+
+        std::ofstream ofs(path, std::ios::out | std::ios::binary | std::ios::trunc);
+        if (!ofs.is_open()) {
+            if (err) {
+                err->errorType = ErrorType::UnknownError;
+                err->errorCode = 2;
+                err->message = "Failed to open config file for write: " + path;
+                err->details = nlohmann::json{{"path", path}};
+            }
+            return false;
+        }
+
+        // 写盘时避免写入 env 替换后的敏感信息：始终以默认模板为准
+        const auto tmpl = makeDefaultConfig();
+        ofs << tmpl.dump(2) << "\n";
+        ofs.flush();
+        return true;
+    } catch (const std::exception& e) {
+        if (err) {
+            err->errorType = ErrorType::UnknownError;
+            err->errorCode = 3;
+            err->message = std::string("Failed to save config file: ") + e.what();
+            err->details = nlohmann::json{{"path", path}};
+        }
+        return false;
+    }
 }
 
 std::optional<nlohmann::json> ConfigManager::get(const std::string& keyPath) const {
@@ -222,7 +286,9 @@ std::vector<std::string> ConfigManager::validate() const {
 nlohmann::json ConfigManager::makeDefaultConfig() {
     // 最小可用：api + models + routing + tools
     nlohmann::json j;
+    j["_comment"] = "NAW System AI Service config template (auto-generated). JSON has no comments; use _comment fields.";
     j["api"] = {
+        {"_comment", "api_key is recommended to be injected via env var, avoid plaintext on disk."},
         {"base_url", "https://api.siliconflow.cn/v1"},
         {"api_key", "${SILICONFLOW_API_KEY}"},
         {"default_timeout_ms", 30000}
