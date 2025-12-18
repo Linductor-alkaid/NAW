@@ -6,8 +6,10 @@
 #include "naw/desktop_pet/service/utils/HttpClient.h"
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -18,6 +20,10 @@
 #include <string_view>
 #include <thread>
 #include <vector>
+#include <cstring>
+#include <algorithm>
+
+#include <nlohmann/json.hpp>
 
 using naw::desktop_pet::service::APIClient;
 using naw::desktop_pet::service::ConfigManager;
@@ -218,6 +224,10 @@ private:
     bool stop_{false};
 };
 
+static bool looksLikeEnvPlaceholder(const std::string& s) {
+    return s.find("${") != std::string::npos;
+}
+
 static std::optional<std::string> readFileToString(const std::string& path, std::string* err) {
     std::ifstream ifs(path, std::ios::binary);
     if (!ifs) {
@@ -257,6 +267,7 @@ static std::optional<SttConfig> readSttConfig(ConfigManager& cfg, std::string* w
 
     auto baseUrlJ = cfg.get("multimodal.stt.base_url");
     if (baseUrlJ && baseUrlJ->is_string()) sc.baseUrl = baseUrlJ->get<std::string>();
+    if (looksLikeEnvPlaceholder(sc.baseUrl)) sc.baseUrl.clear();
 
     auto apiKeyJ = cfg.get("multimodal.stt.api_key");
     if (apiKeyJ && apiKeyJ->is_string()) sc.apiKey = apiKeyJ->get<std::string>();
@@ -286,7 +297,7 @@ static std::optional<SttConfig> readSttConfig(ConfigManager& cfg, std::string* w
         if (whyNot) *whyNot = "missing multimodal.stt.base_url (and api.base_url fallback)";
         return std::nullopt;
     }
-    if (sc.apiKey.empty() || sc.apiKey.find("${") != std::string::npos) {
+    if (sc.apiKey.empty() || looksLikeEnvPlaceholder(sc.apiKey)) {
         if (whyNot) *whyNot = "missing multimodal.stt.api_key (and api.api_key fallback); consider env override";
         return std::nullopt;
     }
@@ -296,6 +307,462 @@ static std::optional<SttConfig> readSttConfig(ConfigManager& cfg, std::string* w
     }
 
     return sc;
+}
+
+struct LlmFilterConfig {
+    bool enabled{false};
+    std::string modelId;
+    std::string promptPath{"src/naw/desktop_pet/service/examples/prompt.txt"};
+};
+
+static LlmFilterConfig readLlmFilterConfig(ConfigManager& cfg) {
+    LlmFilterConfig lc;
+    if (auto j = cfg.get("multimodal.llm_filter.enabled"); j && j->is_boolean()) lc.enabled = j->get<bool>();
+    if (auto j = cfg.get("multimodal.llm_filter.model_id"); j && j->is_string()) lc.modelId = j->get<std::string>();
+    if (auto j = cfg.get("multimodal.llm_filter.prompt_path"); j && j->is_string()) lc.promptPath = j->get<std::string>();
+    return lc;
+}
+
+struct LlmFilterResult {
+    bool respond{false};
+    std::string correctedText;
+    std::string confidence;
+    std::string reason;
+};
+
+static std::optional<LlmFilterResult> parseLlmFilterJson(const std::string& text, std::string* err) {
+    // 允许模型包一层 ```json ... ```；尽量提取首个 { ... } 片段
+    auto firstBrace = text.find('{');
+    auto lastBrace = text.rfind('}');
+    if (firstBrace == std::string::npos || lastBrace == std::string::npos || lastBrace <= firstBrace) {
+        if (err) *err = "llm1 output has no JSON object: " + text;
+        return std::nullopt;
+    }
+    const std::string jsonPart = text.substr(firstBrace, lastBrace - firstBrace + 1);
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::parse(jsonPart);
+    } catch (const std::exception& e) {
+        if (err) *err = std::string("llm1 JSON parse failed: ") + e.what() + " raw=" + jsonPart;
+        return std::nullopt;
+    }
+
+    if (!j.is_object() || !j.contains("respond") || !j["respond"].is_boolean()) {
+        if (err) *err = "llm1 JSON missing boolean 'respond': " + j.dump();
+        return std::nullopt;
+    }
+
+    LlmFilterResult r;
+    r.respond = j["respond"].get<bool>();
+    if (j.contains("reason") && j["reason"].is_string()) r.reason = j["reason"].get<std::string>();
+    if (j.contains("confidence") && j["confidence"].is_string()) r.confidence = j["confidence"].get<std::string>();
+    if (r.respond) {
+        if (j.contains("corrected_text") && j["corrected_text"].is_string()) {
+            r.correctedText = j["corrected_text"].get<std::string>();
+        } else {
+            // 容错：如果 respond=true 但没有 corrected_text，就用空，让上层回退到原始文本
+            r.correctedText.clear();
+        }
+    }
+    return r;
+}
+
+static std::optional<LlmFilterResult> runLlm1Filter(APIClient& api,
+                                                    const LlmFilterConfig& cfg1,
+                                                    const std::string& promptText,
+                                                    const std::vector<ChatMessage>& llm2History,
+                                                    const std::string& currentInput,
+                                                    double timeSinceLastSeconds,
+                                                    const std::string& petName,
+                                                    std::string* errOut) {
+    if (!cfg1.enabled) {
+        LlmFilterResult r;
+        r.respond = true;
+        r.correctedText = currentInput;
+        r.confidence = "high";
+        r.reason = "llm_filter.disabled";
+        return r;
+    }
+    if (cfg1.modelId.empty()) {
+        if (errOut) *errOut = "multimodal.llm_filter.model_id is empty";
+        return std::nullopt;
+    }
+
+    // 取 llm2 最近 10 轮上下文（避免太长）
+    nlohmann::json hist = nlohmann::json::array();
+    const size_t maxMsgs = 20; // 10轮*2
+    const size_t start = llm2History.size() > maxMsgs ? (llm2History.size() - maxMsgs) : 0;
+    for (size_t i = start; i < llm2History.size(); ++i) {
+        // ChatMessage::toJson() 是 openai 兼容结构（含 role/content）
+        hist.push_back(llm2History[i].toJson());
+    }
+
+    nlohmann::json payload;
+    payload["conversation_history"] = hist;
+    payload["current_input"] = currentInput;
+    payload["time_since_last"] = timeSinceLastSeconds;
+    payload["pet_name"] = petName;
+
+    ChatRequest req;
+    req.model = cfg1.modelId;
+    req.temperature = 0.0f; // 过滤器尽量确定性
+    req.messages = {
+        ChatMessage(MessageRole::System, promptText),
+        ChatMessage(MessageRole::User, payload.dump()),
+    };
+
+    try {
+        auto resp = api.chat(req);
+        std::string parseErr;
+        auto r = parseLlmFilterJson(resp.content, &parseErr);
+        if (!r) {
+            if (errOut) *errOut = parseErr;
+            return std::nullopt;
+        }
+        return r;
+    } catch (const std::exception& e) {
+        if (errOut) *errOut = std::string("llm1 chat failed: ") + e.what();
+        return std::nullopt;
+    }
+}
+
+struct TtsConfig {
+    bool enabled{false};
+    std::string baseUrl;
+    std::string apiKey;
+    std::string modelId;
+    // SiliconFlow /audio/speech 要求 voice 或 references 至少给一个
+    // - voice: 预置音色（例如 moss 模型：fnlp/MOSS-TTSD-v0.5:alex）
+    // - references: 用上传后的 uri（speech:xxx:...）作为参考音频（更适合 CosyVoice2）
+    std::string voice{};
+    std::string referenceUri{}; // 对应 upload-voice 返回的 uri（speech:...）
+    std::string referenceText{}; // references[].text（某些服务端要求提供参考音频对应文本）
+
+    // SiliconFlow 使用 response_format（mp3/opus/wav/pcm），不是 format
+    std::string responseFormat{"wav"};
+    std::optional<int> sampleRate; // 例如 44100
+    std::optional<int> pcmChannels; // pcm 输出声道数（1/2），默认 1
+    std::optional<float> speed;    // 0.25..4
+    std::optional<float> gain;     // -10..10
+    std::optional<bool> stream;    // 默认 true（服务端可能会忽略）
+};
+
+static std::optional<TtsConfig> readTtsConfig(ConfigManager& cfg, std::string* whyNot) {
+    TtsConfig tc;
+    if (auto j = cfg.get("multimodal.tts.enabled"); j && j->is_boolean()) tc.enabled = j->get<bool>();
+    if (auto j = cfg.get("multimodal.tts.base_url"); j && j->is_string()) tc.baseUrl = j->get<std::string>();
+    if (looksLikeEnvPlaceholder(tc.baseUrl)) tc.baseUrl.clear();
+    if (auto j = cfg.get("multimodal.tts.api_key"); j && j->is_string()) tc.apiKey = j->get<std::string>();
+    if (auto j = cfg.get("multimodal.tts.model_id"); j && j->is_string()) tc.modelId = j->get<std::string>();
+    if (auto j = cfg.get("multimodal.tts.voice"); j && j->is_string()) tc.voice = j->get<std::string>();
+    if (auto j = cfg.get("multimodal.tts.reference_uri"); j && j->is_string()) tc.referenceUri = j->get<std::string>();
+    if (auto j = cfg.get("multimodal.tts.reference_text"); j && j->is_string()) tc.referenceText = j->get<std::string>();
+
+    if (auto j = cfg.get("multimodal.tts.response_format"); j && j->is_string()) tc.responseFormat = j->get<std::string>();
+    if (auto j = cfg.get("multimodal.tts.sample_rate"); j && j->is_number_integer()) tc.sampleRate = j->get<int>();
+    if (auto j = cfg.get("multimodal.tts.pcm_channels"); j && j->is_number_integer()) tc.pcmChannels = j->get<int>();
+    if (auto j = cfg.get("multimodal.tts.speed"); j && j->is_number()) tc.speed = j->get<float>();
+    if (auto j = cfg.get("multimodal.tts.gain"); j && j->is_number()) tc.gain = j->get<float>();
+    if (auto j = cfg.get("multimodal.tts.stream"); j && j->is_boolean()) tc.stream = j->get<bool>();
+
+    if (!tc.enabled) {
+        if (whyNot) *whyNot = "multimodal.tts.enabled is false";
+        return std::nullopt;
+    }
+    if (tc.baseUrl.empty()) {
+        if (auto j = cfg.get("api.base_url"); j && j->is_string()) tc.baseUrl = j->get<std::string>();
+    }
+    if (tc.apiKey.empty()) {
+        if (auto j = cfg.get("api.api_key"); j && j->is_string()) tc.apiKey = j->get<std::string>();
+    }
+    if (tc.baseUrl.empty()) {
+        if (whyNot) *whyNot = "missing multimodal.tts.base_url (and api.base_url fallback)";
+        return std::nullopt;
+    }
+    if (tc.apiKey.empty() || looksLikeEnvPlaceholder(tc.apiKey)) {
+        if (whyNot) *whyNot = "missing multimodal.tts.api_key (and api.api_key fallback); consider env override";
+        return std::nullopt;
+    }
+    if (tc.modelId.empty()) {
+        if (whyNot) *whyNot = "missing multimodal.tts.model_id";
+        return std::nullopt;
+    }
+    // SiliconFlow 要求 voice 或 references 至少一个
+    const bool hasVoice = !tc.voice.empty() && tc.voice != "default";
+    const bool hasRef = !tc.referenceUri.empty();
+    if (!hasVoice && !hasRef) {
+        if (whyNot) {
+            *whyNot =
+                "SiliconFlow TTS requires multimodal.tts.voice OR multimodal.tts.reference_uri. "
+                "For CosyVoice2, use upload-voice to get a uri, then set multimodal.tts.reference_uri.";
+        }
+        return std::nullopt;
+    }
+    return tc;
+}
+
+static std::optional<std::string> synthesizeSpeechViaOpenAICompatible(const TtsConfig& tts,
+                                                                      const std::string& text,
+                                                                      std::string* errOut) {
+    HttpClient client(tts.baseUrl);
+    std::map<std::string, std::string> headers;
+    headers["Authorization"] = "Bearer " + tts.apiKey;
+
+    auto buildCommon = [&](nlohmann::json& body) {
+        body["model"] = tts.modelId;
+        body["input"] = text;
+        if (!tts.responseFormat.empty() && tts.responseFormat != "default") {
+            body["response_format"] = tts.responseFormat;
+        }
+        if (tts.sampleRate.has_value()) body["sample_rate"] = *tts.sampleRate;
+        if (tts.speed.has_value()) body["speed"] = *tts.speed;
+        if (tts.gain.has_value()) body["gain"] = *tts.gain;
+        // 目前示例未实现 TTS 流式拼接，因此强制走非流式返回，避免拿到截断音频导致噪声/崩溃。
+        body["stream"] = false;
+    };
+
+    // 兼容策略：
+    // 1) 若配置了 voice：直接走 voice
+    // 2) 否则若有 referenceUri：
+    //    2.1) 优先把 referenceUri 当作 voice（部分服务端把 speech:... 当 voice 使用）
+    //    2.2) 若失败，再回退到 references 形态（audio=uri, text=referenceText）
+    std::vector<nlohmann::json> attempts;
+
+    if (!tts.voice.empty() && tts.voice != "default") {
+        nlohmann::json b;
+        buildCommon(b);
+        b["voice"] = tts.voice;
+        attempts.push_back(std::move(b));
+    } else if (!tts.referenceUri.empty()) {
+        {
+            nlohmann::json b;
+            buildCommon(b);
+            b["voice"] = tts.referenceUri;
+            attempts.push_back(std::move(b));
+        }
+        {
+            nlohmann::json b;
+            buildCommon(b);
+            b["references"] = nlohmann::json::array(
+                {{{"audio", tts.referenceUri}, {"text", tts.referenceText}}});
+            attempts.push_back(std::move(b));
+        }
+    }
+
+    for (size_t i = 0; i < attempts.size(); ++i) {
+        auto resp = client.post("/audio/speech", attempts[i].dump(), "application/json", headers);
+        if (resp.isSuccess()) {
+            return resp.body; // 二进制音频
+        }
+        // 如果是 5xx，直接尝试下一个形态（提高成功率）
+        // 如果是 4xx，也尝试下一个（常见是 voice 形态不支持）
+        if (i == attempts.size() - 1) {
+            if (errOut) {
+                *errOut = "TTS HTTP failed: status=" + std::to_string(resp.statusCode) +
+                          " error=" + resp.error +
+                          " body=" + resp.body;
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+static std::string joinUrl(const std::string& base, const std::string& path) {
+    if (base.empty()) return path;
+    if (path.empty()) return base;
+    if (base.back() == '/' && path.front() == '/') return base + path.substr(1);
+    if (base.back() != '/' && path.front() != '/') return base + "/" + path;
+    return base + path;
+}
+
+static bool isProbablyJson(std::string_view chunk) {
+    // 仅靠 “首个非空白字符是否是 {/[” 对二进制 PCM 很不安全（随机字节也可能碰巧是 '{'）。
+    // 这里做更严格的启发式：必须以 '{'/'[' 开头且后续一小段主要是可打印字符。
+    size_t i = 0;
+    while (i < chunk.size() && (chunk[i] == ' ' || chunk[i] == '\r' || chunk[i] == '\n' || chunk[i] == '\t')) ++i;
+    if (i >= chunk.size()) return false;
+    const char first = chunk[i];
+    if (first != '{' && first != '[') return false;
+    const size_t scan = std::min<size_t>(chunk.size() - i, 32);
+    size_t printable = 0;
+    for (size_t k = 0; k < scan; ++k) {
+        unsigned char c = static_cast<unsigned char>(chunk[i + k]);
+        if (c == '\r' || c == '\n' || c == '\t') { printable++; continue; }
+        if (c >= 32 && c <= 126) { printable++; continue; }
+    }
+    // 80% 以上可打印才认为是 JSON 文本
+    return printable * 10 >= scan * 8;
+}
+
+static bool containsCaseInsensitive(std::string_view haystack, std::string_view needle) {
+    if (needle.empty()) return false;
+    auto lower = [](unsigned char c) { return static_cast<char>(std::tolower(c)); };
+    for (size_t i = 0; i + needle.size() <= haystack.size(); ++i) {
+        bool ok = true;
+        for (size_t k = 0; k < needle.size(); ++k) {
+            if (lower(static_cast<unsigned char>(haystack[i + k])) !=
+                lower(static_cast<unsigned char>(needle[k]))) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return true;
+    }
+    return false;
+}
+
+static bool shouldSpeakTts(const std::string& text, int maxChars) {
+    if (text.empty()) return false;
+    if (maxChars > 0 && static_cast<int>(text.size()) > maxChars) return false;
+    // 代码/公式：直接拒绝播报
+    if (text.find("```") != std::string::npos) return false;
+    if (text.find("\\frac") != std::string::npos || text.find("\\sum") != std::string::npos ||
+        text.find("\\int") != std::string::npos || text.find("$$") != std::string::npos) {
+        return false;
+    }
+    // 符号密度过高通常读起来很糟
+    const std::string symbols = "{}[]()<>`=/*_^\\\\|";
+    int symCount = 0;
+    int nonSpace = 0;
+    for (unsigned char c : text) {
+        if (c <= 32) continue;
+        nonSpace++;
+        if (symbols.find(static_cast<char>(c)) != std::string::npos) symCount++;
+    }
+    if (nonSpace > 0) {
+        const double ratio = static_cast<double>(symCount) / static_cast<double>(nonSpace);
+        if (ratio >= 0.18) return false;
+    }
+    return true;
+}
+
+static std::optional<std::uint32_t> ttsPcmStreamToPlayback(const TtsConfig& tts,
+                                                           const std::string& text,
+                                                           AudioProcessor& audio,
+                                                           std::optional<std::uint32_t> previousId,
+                                                           std::atomic<bool>& playbackActive,
+                                                           std::atomic<long long>& ignoreUntilMs,
+                                                           int tailIgnoreMs,
+                                                           std::string* errOut) {
+    // 停止上一次播放（避免多路同时播导致资源/线程压力）
+    if (previousId.has_value()) {
+        audio.stop(*previousId);
+    }
+
+    // 音频流参数：默认按 S16LE 输出；声道数做成可配置（否则声道不匹配容易炸麦/噪声）
+    naw::desktop_pet::service::utils::AudioStreamConfig stream;
+    stream.format = AudioFormat::S16;
+    stream.channels = static_cast<std::uint32_t>(tts.pcmChannels.value_or(1));
+    stream.sampleRate = tts.sampleRate.has_value() ? static_cast<std::uint32_t>(*tts.sampleRate) : 44100;
+
+    // 播放期间标记 active，用于 VAD gate
+    playbackActive.store(true, std::memory_order_release);
+
+    // 增大缓冲到 ~3s，降低欠载导致的“频繁小噪声”
+    auto soundId = audio.startStream(stream, static_cast<std::size_t>(stream.sampleRate) * 3);
+    if (!soundId.has_value()) {
+        playbackActive.store(false, std::memory_order_release);
+        if (errOut) *errOut = "AudioProcessor::startStream failed";
+        return std::nullopt;
+    }
+
+    HttpClient client(tts.baseUrl);
+
+    // 构造请求体：强制 pcm + stream=true
+    auto buildCommon = [&](nlohmann::json& body) {
+        body["model"] = tts.modelId;
+        body["input"] = text;
+        body["response_format"] = "pcm";
+        body["stream"] = true;
+        if (tts.sampleRate.has_value()) body["sample_rate"] = *tts.sampleRate;
+        if (tts.speed.has_value()) body["speed"] = *tts.speed;
+        if (tts.gain.has_value()) body["gain"] = *tts.gain;
+    };
+
+    nlohmann::json body;
+    buildCommon(body);
+    if (!tts.voice.empty() && tts.voice != "default") {
+        body["voice"] = tts.voice;
+    } else if (!tts.referenceUri.empty()) {
+        // 先用 uri 作为 voice（更贴合 CosyVoice2 习惯）
+        body["voice"] = tts.referenceUri;
+    }
+
+    naw::desktop_pet::service::utils::HttpRequest req;
+    req.method = naw::desktop_pet::service::utils::HttpMethod::POST;
+    req.url = joinUrl(tts.baseUrl, "/audio/speech");
+    req.timeoutMs = 60000;
+    req.followRedirects = true;
+    req.body = body.dump();
+    req.headers["Authorization"] = "Bearer " + tts.apiKey;
+    req.headers["Content-Type"] = "application/json";
+
+    // 处理二进制分块：保证按帧对齐（S16 * channels）
+    std::string errorBody;
+    std::vector<std::uint8_t> pending;
+    pending.reserve(4096);
+    bool sawJson = false;
+
+    req.streamHandler = [&](std::string_view chunk) {
+        if (chunk.empty()) return;
+        if (!sawJson && isProbablyJson(chunk)) {
+            sawJson = true;
+        }
+        if (sawJson) {
+            // 服务器可能在错误时返回 JSON
+            if (errorBody.size() < 64 * 1024) errorBody.append(chunk.data(), chunk.size());
+            return;
+        }
+
+        // append PCM bytes
+        pending.insert(pending.end(),
+                       reinterpret_cast<const std::uint8_t*>(chunk.data()),
+                       reinterpret_cast<const std::uint8_t*>(chunk.data()) + chunk.size());
+
+        const size_t frameBytes = 2u * static_cast<size_t>(stream.channels); // S16 * channels
+        const size_t usable = (pending.size() / frameBytes) * frameBytes;
+        if (usable == 0) return;
+
+        // 可能 buffer 满：不要在网络回调里长时间 sleep（会导致后续 chunk 堵塞，出现“只说半句”）。
+        // 策略：尽力写，写不进去就保留 pending 等下一次 chunk 再继续。
+        size_t offset = 0;
+        const size_t kChunk = 4096u * frameBytes; // 4KB * frameBytes 的倍数
+        while (offset < usable) {
+            const size_t remain = usable - offset;
+            const size_t toWrite = (std::min)(remain, kChunk);
+            if (audio.appendStreamData(*soundId, pending.data() + offset, toWrite)) {
+                offset += toWrite;
+                continue;
+            }
+            break;
+        }
+
+        // 移除已消费部分
+        if (offset == 0) return;
+        pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(offset));
+    };
+
+    auto resp = client.executeStream(req);
+    audio.finishStream(*soundId);
+    playbackActive.store(false, std::memory_order_release);
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    ignoreUntilMs.store(nowMs + static_cast<long long>(tailIgnoreMs), std::memory_order_release);
+
+    if (!resp.isSuccess()) {
+        audio.stop(*soundId);
+        if (errOut) {
+            if (!errorBody.empty()) {
+                *errOut = "TTS stream failed: status=" + std::to_string(resp.statusCode) + " body=" + errorBody;
+            } else {
+                *errOut = "TTS stream failed: status=" + std::to_string(resp.statusCode) + " error=" + resp.error;
+            }
+        }
+        return std::nullopt;
+    }
+
+    return soundId;
 }
 
 static std::optional<std::string> transcribeWavViaOpenAICompatible(const SttConfig& stt,
@@ -386,6 +853,41 @@ int main() {
 
     APIClient api(cfg);
 
+    // pet.name
+    std::string petName = "NAW";
+    if (auto j = cfg.get("pet.name"); j && j->is_string() && !j->get<std::string>().empty()) {
+        petName = j->get<std::string>();
+    }
+
+    // llm1 filter config + prompt
+    const auto llm1Cfg = readLlmFilterConfig(cfg);
+    std::string llm1PromptText;
+    {
+        std::string perr;
+        auto p = readFileToString(llm1Cfg.promptPath, &perr);
+        if (p) {
+            llm1PromptText = *p;
+        } else {
+            // 允许没有文件时继续（但会导致 llm1 输出不可控），因此只在启用时强提示
+            if (llm1Cfg.enabled) {
+                std::cerr << "[WARN] failed to read llm_filter prompt_path=" << llm1Cfg.promptPath
+                          << " err=" << perr << "\n";
+            }
+        }
+    }
+
+    // tts config（可选）
+    std::string ttsWhy;
+    auto ttsCfg = readTtsConfig(cfg, &ttsWhy);
+    int ttsTailIgnoreMs = 600;
+    if (auto j = cfg.get("multimodal.tts.tail_ignore_ms"); j && j->is_number_integer()) {
+        ttsTailIgnoreMs = j->get<int>();
+    }
+
+    // 回声门控：共享状态（播放期间/尾音窗口）
+    std::atomic<bool> playbackActive{false};
+    std::atomic<long long> ignoreUntilMs{0};
+
     AudioProcessor audio;
     if (!audio.initialize()) {
         std::cerr << "AudioProcessor initialize failed\n";
@@ -397,16 +899,26 @@ int main() {
 
     std::mutex historyMu;
     std::vector<ChatMessage> history;
-    history.emplace_back(MessageRole::System, "You are a helpful assistant.");
+    history.emplace_back(
+        MessageRole::System,
+        "You are a small desktop pet with your own personality. "
+        "You are not a generic assistant. "
+        "Be brief, warm, and natural. Avoid being overly formal. "
+        "If the user is busy, do not interrupt; respond only when appropriate.");
+
+    std::mutex timingMu;
+    std::chrono::steady_clock::time_point lastPetResponse = std::chrono::steady_clock::now() - std::chrono::hours(24);
 
     std::thread worker([&] {
         SegmentJob job;
+        std::optional<std::uint32_t> ttsStreamId;
+        // 播放门控标志在主线程 cbs.onComplete 中也会读取，所以使用外层共享变量（在 main 中定义）
         while (jobs.popWait(job)) {
             if (!running.load()) break;
 
             std::string sttErr;
-            auto text = transcribeWavViaOpenAICompatible(*sttCfg, job.wavPath, &sttErr);
-            if (!text || text->empty()) {
+            auto sttText = transcribeWavViaOpenAICompatible(*sttCfg, job.wavPath, &sttErr);
+            if (!sttText || sttText->empty()) {
 #if defined(_WIN32)
                 stderrWriter().write("\n[STT ERROR] ");
                 stderrWriter().write(sttErr);
@@ -422,15 +934,135 @@ int main() {
 
 #if defined(_WIN32)
             stdoutWriter().write("\nYou(speech)> ");
-            stdoutWriter().write(*text);
+            stdoutWriter().write(*sttText);
             stdoutWriter().write("\nAssistant> ");
             stdoutWriter().flush();
 #else
-            std::cout << "\nYou(speech)> " << *text << "\nAssistant> " << std::flush;
+            std::cout << "\nYou(speech)> " << *sttText << "\nAssistant> " << std::flush;
+#endif
+
+            // llm1 gate: decide respond + correct text
+            double sinceLast = 0.0;
+            {
+                std::lock_guard<std::mutex> lk(timingMu);
+                const auto now = std::chrono::steady_clock::now();
+                sinceLast = std::chrono::duration<double>(now - lastPetResponse).count();
+            }
+
+            std::vector<ChatMessage> historySnapshot;
+            {
+                std::lock_guard<std::mutex> lk(historyMu);
+                historySnapshot = history;
+            }
+
+            std::string llm1Err;
+            auto filterRes = runLlm1Filter(api,
+                                           llm1Cfg,
+                                           llm1PromptText,
+                                           historySnapshot,
+                                           *sttText,
+                                           sinceLast,
+                                           petName,
+                                           &llm1Err);
+            if (!filterRes) {
+#if defined(_WIN32)
+                stderrWriter().write("\n[LLM1 ERROR] ");
+                stderrWriter().write(llm1Err);
+                stderrWriter().write("\n");
+                stderrWriter().flush();
+#else
+                std::cerr << "\n[LLM1 ERROR] " << llm1Err << "\n";
+#endif
+                audio.removeVadFile(job.wavPath);
+                continue;
+            }
+
+            if (!filterRes->respond) {
+#if defined(_WIN32)
+                stderrWriter().write("\n[LLM1] respond=false reason=");
+                stderrWriter().write(filterRes->reason);
+                stderrWriter().write(" confidence=");
+                stderrWriter().write(filterRes->confidence);
+                stderrWriter().write("\n");
+                stderrWriter().flush();
+                stdoutWriter().write("\n(ignored)\n");
+                stdoutWriter().flush();
+#else
+                std::cerr << "\n[LLM1] respond=false reason=" << filterRes->reason
+                          << " confidence=" << filterRes->confidence << "\n";
+                std::cout << "\n(ignored)\n" << std::flush;
+#endif
+                audio.removeVadFile(job.wavPath);
+                continue;
+            }
+
+            // ---- 硬规则降噪/降频（避免桌宠过于打扰）----
+            // 1) 低置信度：直接忽略
+            if (filterRes->confidence == "low") {
+#if defined(_WIN32)
+                stderrWriter().write("\n[LLM1] ignored due to low confidence\n");
+                stderrWriter().flush();
+                stdoutWriter().write("\n(ignored: low confidence)\n");
+                stdoutWriter().flush();
+#else
+                std::cerr << "\n[LLM1] ignored due to low confidence\n";
+                std::cout << "\n(ignored: low confidence)\n" << std::flush;
+#endif
+                audio.removeVadFile(job.wavPath);
+                continue;
+            }
+
+            const std::string corrected = !filterRes->correctedText.empty() ? filterRes->correctedText : *sttText;
+            // 2) 明显无意义极短输入：忽略（例如单个音/符号）
+            if (corrected.size() < 2) {
+#if defined(_WIN32)
+                stderrWriter().write("\n[LLM1] ignored due to too-short input\n");
+                stderrWriter().flush();
+                stdoutWriter().write("\n(ignored: too short)\n");
+                stdoutWriter().flush();
+#else
+                std::cerr << "\n[LLM1] ignored due to too-short input\n";
+                std::cout << "\n(ignored: too short)\n" << std::flush;
+#endif
+                audio.removeVadFile(job.wavPath);
+                continue;
+            }
+
+            // 3) 冷却时间：上次说完后的 N 秒内，除非明确叫了名字，否则不回应
+            constexpr double kCooldownSeconds = 8.0;
+            const bool calledPet = containsCaseInsensitive(corrected, petName) ||
+                                   containsCaseInsensitive(*sttText, petName);
+            if (sinceLast < kCooldownSeconds && !calledPet) {
+#if defined(_WIN32)
+                stderrWriter().write("\n[LLM1] ignored due to cooldown\n");
+                stderrWriter().flush();
+                stdoutWriter().write("\n(ignored: cooldown)\n");
+                stdoutWriter().flush();
+#else
+                std::cerr << "\n[LLM1] ignored due to cooldown\n";
+                std::cout << "\n(ignored: cooldown)\n" << std::flush;
+#endif
+                audio.removeVadFile(job.wavPath);
+                continue;
+            }
+
+#if defined(_WIN32)
+            stderrWriter().write("\n[LLM1] respond=true confidence=");
+            stderrWriter().write(filterRes->confidence);
+            stderrWriter().write(" reason=");
+            stderrWriter().write(filterRes->reason);
+            stderrWriter().write("\n");
+            stderrWriter().flush();
+#else
+            std::cerr << "\n[LLM1] respond=true confidence=" << filterRes->confidence
+                      << " reason=" << filterRes->reason << "\n";
 #endif
 
             ChatRequest req;
-            if (auto m = cfg.get("routing.fallback_model"); m.has_value() && m->is_string()) {
+            // llm2 使用与 llm1 相同的模型（若配置了 llm_filter.model_id）
+            if (!llm1Cfg.modelId.empty()) {
+                req.model = llm1Cfg.modelId;
+            } else if (auto m = cfg.get("routing.fallback_model"); m.has_value() && m->is_string()) {
                 req.model = m->get<std::string>();
             } else {
                 req.model = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B";
@@ -439,7 +1071,7 @@ int main() {
 
             {
                 std::lock_guard<std::mutex> lk(historyMu);
-                history.emplace_back(MessageRole::User, *text);
+                history.emplace_back(MessageRole::User, corrected);
                 req.messages = history;
             }
 
@@ -494,6 +1126,45 @@ int main() {
                 history.emplace_back(MessageRole::Assistant, assistantText);
             }
 
+            // tts + playback (optional)
+            if (ttsCfg.has_value()) {
+                std::string ttsErr;
+                auto id = ttsPcmStreamToPlayback(*ttsCfg,
+                                                 assistantText,
+                                                 audio,
+                                                 ttsStreamId,
+                                                 playbackActive,
+                                                 ignoreUntilMs,
+                                                 ttsTailIgnoreMs,
+                                                 &ttsErr);
+                if (!id) {
+#if defined(_WIN32)
+                    stderrWriter().write("\n[TTS ERROR] ");
+                    stderrWriter().write(ttsErr);
+                    stderrWriter().write("\n");
+                    stderrWriter().flush();
+#else
+                    std::cerr << "\n[TTS ERROR] " << ttsErr << "\n";
+#endif
+                } else {
+                    ttsStreamId = id;
+                }
+            } else {
+#if defined(_WIN32)
+                stderrWriter().write("\n[TTS disabled] ");
+                stderrWriter().write(ttsWhy);
+                stderrWriter().write("\n");
+                stderrWriter().flush();
+#else
+                std::cerr << "\n[TTS disabled] " << ttsWhy << "\n";
+#endif
+            }
+
+            {
+                std::lock_guard<std::mutex> lk(timingMu);
+                lastPetResponse = std::chrono::steady_clock::now();
+            }
+
             // 清理本段录音文件
             audio.removeVadFile(job.wavPath);
 
@@ -528,8 +1199,18 @@ int main() {
         std::cout << "\n[VAD] trigger\n" << std::flush;
 #endif
     };
+    // 回声门控：不暂停录音/VAD，只在“播放期间+尾音窗口”丢弃片段，避免桌宠自己说话触发 STT→LLM 自激。
+    // 注意：由于 onComplete 在 AudioProcessor 内部线程触发，这里仅做轻量判断与删除。
     cbs.onComplete = [&](const std::string& path) {
-        // 音频线程：只投递任务
+        const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               std::chrono::steady_clock::now().time_since_epoch())
+                               .count();
+        const auto until = ignoreUntilMs.load(std::memory_order_acquire);
+        const bool active = playbackActive.load(std::memory_order_acquire);
+        if (active || nowMs < until) {
+            audio.removeVadFile(path);
+            return;
+        }
         jobs.push(SegmentJob{path});
     };
 
@@ -557,7 +1238,12 @@ int main() {
         if (line == "/reset") {
             std::lock_guard<std::mutex> lk(historyMu);
             history.clear();
-            history.emplace_back(MessageRole::System, "You are a helpful assistant.");
+            history.emplace_back(
+                MessageRole::System,
+                "You are a small desktop pet with your own personality. "
+                "You are not a generic assistant. "
+                "Be brief, warm, and natural. Avoid being overly formal. "
+                "If the user is busy, do not interrupt; respond only when appropriate.");
             std::cout << "History cleared.\n";
             continue;
         }

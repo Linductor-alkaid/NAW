@@ -231,6 +231,13 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
     };
     j["multimodal"] = {
         {"_comment", "Optional multimodal providers. This node only defines configuration structure; calling logic is implemented in later phases."},
+        {"llm_filter",
+         {
+             {"enabled", false},
+             {"_comment", "Fast LLM layer for 'should I respond?' + ASR correction. Must output strict JSON. See prompt_path."},
+             {"model_id", ""},
+             {"prompt_path", "src/naw/desktop_pet/service/examples/prompt.txt"},
+         }},
         {"stt",
          {
              {"enabled", false},
@@ -247,7 +254,18 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
              {"provider", "siliconflow"},
              {"base_url", "${SILICONFLOW_BASE_URL}"},
              {"api_key", "${SILICONFLOW_API_KEY}"},
-             {"model_id", ""}
+             {"model_id", ""},
+             {"_comment2", "SiliconFlow /audio/speech requires voice OR reference_uri. For CosyVoice2, set reference_uri from /uploads/audio/voice response."},
+             {"voice", ""},
+             {"reference_uri", ""},
+             {"reference_text", ""},
+             {"response_format", "pcm"},
+             {"sample_rate", 44100},
+             {"speed", 1.0},
+             {"gain", 0.0},
+             {"stream", true},
+             {"tail_ignore_ms", 600},
+             {"max_speak_chars", 220},
          }},
         {"vlm",
          {
@@ -273,6 +291,9 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
     };
     j["tools"] = {
         {"project_root", "${PROJECT_ROOT}"}
+    };
+    j["pet"] = {
+        {"name", "NAW"}
     };
     return j;
 }
