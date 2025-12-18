@@ -59,6 +59,12 @@ add_library(NAW_ServiceUtils STATIC
     ${SERVICE_UTILS_HEADERS}
 )
 
+# 依赖：Service Foundation（ErrorHandler 等）
+target_link_libraries(NAW_ServiceUtils
+    PUBLIC
+        NAW_ServiceFoundation
+)
+
 # ============================================================================
 # 设置包含目录
 # ============================================================================

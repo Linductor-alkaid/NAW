@@ -1,5 +1,6 @@
 #include "naw/desktop_pet/service/utils/HttpClient.h"
 #include "naw/desktop_pet/service/utils/HttpTypes.h"
+#include "naw/desktop_pet/service/ErrorHandler.h"
 
 // 包含cpp-httplib头文件
 // 注意：如果不需要HTTPS支持，可以移除CPPHTTPLIB_OPENSSL_SUPPORT
@@ -405,12 +406,21 @@ HttpResponse HttpClient::executeWithRetry(const HttpRequest& request) {
     HttpResponse response;
     int attempt = 0;
     m_retryStats.totalAttempts.fetch_add(1, std::memory_order_relaxed);
+
+    // 用于统一错误分类/退避
+    naw::desktop_pet::service::ErrorHandler errHandler;
     
     while (attempt <= m_retryConfig.maxRetries) {
         response = executeOnce(request);
         
         // 如果成功或不可重试的错误，直接返回
-        if (response.isSuccess() || !isRetryableError(response)) {
+        const auto errInfo =
+            naw::desktop_pet::service::ErrorHandler::fromHttpResponse(
+                response, std::optional<naw::desktop_pet::service::utils::HttpRequest>{request});
+        const bool retryable =
+            !response.isSuccess() && errHandler.shouldRetry(errInfo, static_cast<uint32_t>(attempt));
+
+        if (response.isSuccess() || !retryable) {
             if (response.isSuccess() && attempt > 0) {
                 m_retryStats.totalSuccessAfterRetry.fetch_add(1, std::memory_order_relaxed);
             }
@@ -419,13 +429,25 @@ HttpResponse HttpClient::executeWithRetry(const HttpRequest& request) {
         
         // 如果还有重试机会
         if (attempt < m_retryConfig.maxRetries) {
-            auto delay = m_retryConfig.getRetryDelay(attempt);
+            // 默认走 ErrorHandler 的延迟策略；若用户配置了自定义回调则优先生效（保持兼容）
+            auto delay = std::chrono::milliseconds{
+                static_cast<std::chrono::milliseconds::rep>(
+                    errHandler.getRetryDelayMs(
+                        errInfo,
+                        static_cast<uint32_t>(attempt),
+                        std::optional<naw::desktop_pet::service::utils::HttpResponse>{response}))
+            };
             if (m_retryConfig.customBackoff) {
                 auto custom = m_retryConfig.customBackoff(attempt);
                 if (custom.count() >= 0) {
                     delay = custom;
                 }
             }
+            // 统一 stderr 重试日志（不泄露请求头/敏感信息）
+            errHandler.log(naw::desktop_pet::service::ErrorHandler::LogLevel::Warning,
+                           "HttpClient retry scheduled: attempt=" + std::to_string(attempt) +
+                               " delay_ms=" + std::to_string(delay.count()),
+                           std::optional<naw::desktop_pet::service::ErrorInfo>{errInfo});
             if (m_retryConfig.retryLogger) {
                 m_retryConfig.retryLogger(attempt, response);
             }

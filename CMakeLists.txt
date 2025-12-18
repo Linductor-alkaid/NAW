@@ -12,7 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # 编译选项
 if(MSVC)
-    set(PROJECT_COMPILE_OPTIONS /utf-8 /W4 /WX-)
+    set(PROJECT_COMPILE_OPTIONS /utf-8 /W4 /WX- /FS)
 else()
     set(PROJECT_COMPILE_OPTIONS -Wall -Wextra -Wpedantic -finput-charset=UTF-8 -fexec-charset=UTF-8)
 endif()
@@ -62,6 +62,7 @@ add_subdirectory(src/naw/agent)
 # ============================================================================
 # Service Utils 模块（HTTP客户端等工具）
 # ============================================================================
+add_subdirectory(src/naw/desktop_pet/service)
 add_subdirectory(src/naw/desktop_pet/service/utils)
 
 # ============================================================================
