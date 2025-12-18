@@ -181,11 +181,109 @@ HttpResponse HttpClient::getStream(const std::string& path,
     request.timeoutMs = m_timeoutMs;
     request.followRedirects = m_followRedirects;
     request.streamHandler = std::move(handler);
-    return execute(request);
+    return executeStream(request);
 }
 
 HttpResponse HttpClient::execute(const HttpRequest& request) {
     return executeWithRetry(request);
+}
+
+HttpResponse HttpClient::executeStream(const HttpRequest& request) {
+    if (!request.streamHandler) {
+        return execute(request);
+    }
+
+    HttpResponse response;
+
+    try {
+        // 获取或创建客户端
+        auto client = getOrCreateClient(request.url);
+        if (!client) {
+            response.error = "Failed to create HTTP client";
+            return response;
+        }
+
+        // 准备请求头（复用与 executeOnce 相同的校验规则）
+        httplib::Headers headers;
+        for (const auto& [key, value] : request.headers) {
+            bool invalid = false;
+            for (unsigned char c : key + value) {
+                if (c < 32 || c == 127 || c == '\r' || c == '\n') {
+                    invalid = true;
+                    break;
+                }
+            }
+            if (invalid) {
+                response.statusCode = 400;
+                response.error = "Invalid header detected";
+                return response;
+            }
+            headers.emplace(key, value);
+        }
+
+        // 提取路径部分
+        std::string fullUrl = request.buildUrl();
+        std::string path = fullUrl;
+        const auto schemePos = fullUrl.find("://");
+        const auto searchStart = (schemePos == std::string::npos) ? 0 : schemePos + 3;
+        const auto pathStart = fullUrl.find('/', searchStart);
+        if (pathStart != std::string::npos) {
+            path = fullUrl.substr(pathStart);
+        }
+
+        auto recv = [&](const char* data, size_t len) {
+            // 仅透传；聚合由上层负责
+            if (request.streamHandler) {
+                request.streamHandler(std::string_view{data, len});
+            }
+            return true;
+        };
+
+        // 执行请求（流式），使用 send + content_receiver 机制以兼容不同 httplib 版本，
+        // 并避免依赖 Post/Put/Patch 的 recv 形态重载。
+        httplib::Request hreq;
+        hreq.method = methodToString(request.method);
+        hreq.path = path;
+        hreq.headers = std::move(headers);
+        hreq.body = request.body;
+
+        // 显式透传 content-type（httplib send 走 Request.headers）
+        if (!hreq.body.empty() && !hreq.has_header("Content-Type")) {
+            const auto ct = request.getHeader("Content-Type").value_or("application/json");
+            hreq.set_header("Content-Type", ct);
+        }
+
+        hreq.content_receiver = [&](const char* data,
+                                    size_t data_length,
+                                    uint64_t /*offset*/,
+                                    uint64_t /*total_length*/) {
+            recv(data, data_length);
+            return true;
+        };
+
+        httplib::Response hres;
+        httplib::Error err = httplib::Error::Unknown;
+        const bool ok = client->send(hreq, hres, err);
+        if (!ok) {
+            response.statusCode = 0;
+            response.error = "Request failed: error_code=" + std::to_string(static_cast<int>(err));
+            return response;
+        }
+
+        response.statusCode = hres.status;
+        HttpHeaders multi;
+        for (const auto& [key, value] : hres.headers) {
+            multi.add(key, value);
+        }
+        response.headers = multi.toFirstValueMap();
+        response.multiHeaders = std::move(multi);
+        // 重要：流式时不累积 body，避免重复拷贝（hres.body 也不读取）
+    } catch (const std::exception& e) {
+        response.statusCode = 0;
+        response.error = "Exception: " + std::string(e.what());
+    }
+
+    return response;
 }
 
 // ========== 异步请求方法 ==========

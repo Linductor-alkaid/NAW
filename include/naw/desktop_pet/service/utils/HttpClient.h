@@ -193,6 +193,19 @@ public:
      */
     HttpResponse execute(const HttpRequest& request);
 
+    /**
+     * @brief 通用流式请求方法（按块回调接收响应正文）
+     *
+     * 语义约定：
+     * - 仅当 request.streamHandler 非空时，此接口才会进行“边读边回调”的流式读取；
+     *   若 streamHandler 为空，则等价于 execute(request)。
+     * - 当通过底层库的流式回调成功接收正文时，返回的 HttpResponse.body 默认保持为空，
+     *   避免重复拷贝；上层如需聚合，请在 streamHandler 中自行累积。
+     * - 流式请求默认不启用自动重试：一旦读取到部分数据后重试会导致重复输出；
+     *   更安全的重连/续传策略应由上层（如 SSE 解析器）控制。
+     */
+    HttpResponse executeStream(const HttpRequest& request);
+
     // ========== 异步请求方法 ==========
 
     struct CancelToken {

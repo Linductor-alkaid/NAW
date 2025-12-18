@@ -2,6 +2,8 @@
 #include "naw/desktop_pet/service/utils/HttpTypes.h"
 #include "naw/desktop_pet/service/utils/HttpSerialization.h"
 
+#include "httplib.h"
+
 #include <chrono>
 #include <future>
 #include <iostream>
@@ -335,6 +337,46 @@ int main() {
                          auto r2 = f2.get();
                          CHECK_EQ(r1.error, "Cancelled");
                          CHECK_EQ(r2.error, "Cancelled");
+                     }});
+
+    tests.push_back({"ExecuteStreamPostCallsHandlerAndBodyEmpty", []() {
+                         httplib::Server server;
+                         server.Post("/stream", [](const httplib::Request&, httplib::Response& res) {
+                             // 这里不强依赖 chunked flush 行为：即使一次性返回，recv handler 也应该被调用
+                             res.set_content("hello-stream", "text/plain");
+                         });
+
+                         // 绑定到本地端口（使用系统分配端口，避免冲突）
+                         const int port = server.bind_to_any_port("127.0.0.1");
+                         CHECK_GT(port, 0);
+
+                         std::thread t([&]() { server.listen_after_bind(); });
+                         struct JoinGuard {
+                             httplib::Server& s;
+                             std::thread& th;
+                             ~JoinGuard() {
+                                 s.stop();
+                                 if (th.joinable()) th.join();
+                             }
+                         } guard{server, t};
+
+                         // 等待 server ready（简单 sleep 避免竞态）
+                         std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+                         HttpClient client("http://127.0.0.1:" + std::to_string(port));
+                         HttpRequest req;
+                         req.method = HttpMethod::POST;
+                         req.url = "http://127.0.0.1:" + std::to_string(port) + "/stream";
+                         req.body = "x";
+                         req.headers = {{"Content-Type", "text/plain"}};
+
+                         std::string received;
+                         req.streamHandler = [&](std::string_view chunk) { received.append(chunk.data(), chunk.size()); };
+
+                         auto resp = client.executeStream(req);
+                         CHECK_EQ(resp.statusCode, 200);
+                         CHECK_TRUE(resp.body.empty());
+                         CHECK_EQ(received, "hello-stream");
                      }});
 
     tests.push_back({"ConnectionPoolCapacityAndPrune", []() {
