@@ -11,6 +11,12 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ConfigManager.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/ChatMessage.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/ModelConfig.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/RequestResponse.h
 )
 
 add_library(NAW_ServiceFoundation STATIC
@@ -62,5 +68,49 @@ if(BUILD_TESTING)
     target_link_libraries(ConfigManagerTest PRIVATE NAW_ServiceFoundation)
     target_include_directories(ConfigManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME ConfigManagerTest COMMAND ConfigManagerTest)
+
+    add_executable(TypesTaskTypeTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TypesTaskTypeTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(TypesTaskTypeTest PRIVATE /GL-)
+        target_link_options(TypesTaskTypeTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(TypesTaskTypeTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(TypesTaskTypeTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME TypesTaskTypeTest COMMAND TypesTaskTypeTest)
+
+    add_executable(TypesChatMessageTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TypesChatMessageTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(TypesChatMessageTest PRIVATE /GL-)
+        target_link_options(TypesChatMessageTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(TypesChatMessageTest PRIVATE NAW_ServiceFoundation NAW_ServiceUtils)
+    target_include_directories(TypesChatMessageTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME TypesChatMessageTest COMMAND TypesChatMessageTest)
+
+    add_executable(TypesModelConfigTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TypesModelConfigTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(TypesModelConfigTest PRIVATE /GL-)
+        target_link_options(TypesModelConfigTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(TypesModelConfigTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(TypesModelConfigTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME TypesModelConfigTest COMMAND TypesModelConfigTest)
+
+    add_executable(TypesRequestResponseTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TypesRequestResponseTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(TypesRequestResponseTest PRIVATE /GL-)
+        target_link_options(TypesRequestResponseTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(TypesRequestResponseTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(TypesRequestResponseTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME TypesRequestResponseTest COMMAND TypesRequestResponseTest)
 endif()
 

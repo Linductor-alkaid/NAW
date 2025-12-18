@@ -538,7 +538,7 @@ config/
 - [x] **定义验证规则**
   - [x] API配置验证（base_url格式、timeout范围等）
   - [x] 模型配置验证（模型ID存在性、supported_tasks 类型等）
-  - [ ] 路由配置验证（任务类型有效性等，依赖 1.5 TaskType）
+  - [ ] 路由配置验证（任务类型有效性等；1.5 TaskType 已就绪，可直接实现）
   - [x] 数值范围验证（timeout 范围等）
 
 #### 1.4.5.3 验证错误处理
@@ -637,182 +637,161 @@ include/naw/desktop_pet/service/types/
 ### 1.5.3 任务类型枚举（TaskType）
 
 #### 1.5.3.1 定义TaskType枚举
-- [ ] **创建TaskType.h文件**
-  - [ ] 定义 `TaskType` 枚举类
-    - [ ] 对话类任务
-      - [ ] `CasualChat` - 日常对话
-      - [ ] `CodeDiscussion` - 代码讨论
-      - [ ] `TechnicalQnA` - 技术问答
-    - [ ] 代码相关任务
-      - [ ] `CodeGeneration` - 代码生成
-      - [ ] `CodeAnalysis` - 代码分析
-      - [ ] `CodeReview` - 代码审查
-      - [ ] `CodeExplanation` - 代码解释
-      - [ ] `BugFix` - Bug修复
-    - [ ] 项目理解任务
-      - [ ] `ProjectAnalysis` - 项目分析
-      - [ ] `ArchitectureDesign` - 架构设计
-      - [ ] `Documentation` - 文档生成
-    - [ ] Agent相关任务
-      - [ ] `AgentDecision` - Agent决策辅助
-      - [ ] `AgentReasoning` - Agent推理
-      - [ ] `ContextUnderstanding` - 上下文理解
-    - [ ] 语音视觉相关任务
-      - [ ] `SpeechRecognition` - 语音识别
-      - [ ] `SpeechSynthesis` - 语音合成
-      - [ ] `VisionUnderstanding` - 视觉理解
-      - [ ] `SceneAnalysis` - 场景分析
-      - [ ] `ProactiveResponse` - 主动响应
-    - [ ] 工具调用相关任务
-      - [ ] `ToolCalling` - 工具调用
-      - [ ] `CodeToolExecution` - 代码工具执行
+- [x] **创建TaskType.h文件**
+  - [x] 定义 `TaskType` 枚举类（对齐《服务层设计方案》）
+    - [x] 对话类任务：`CasualChat` / `CodeDiscussion` / `TechnicalQnA`
+    - [x] 代码相关任务：`CodeGeneration` / `CodeAnalysis` / `CodeReview` / `CodeExplanation` / `BugFix`
+    - [x] 项目理解任务：`ProjectAnalysis` / `ArchitectureDesign` / `Documentation`
+    - [x] Agent相关任务：`AgentDecision` / `AgentReasoning` / `ContextUnderstanding`
+    - [x] 语音视觉相关任务：`SpeechRecognition` / `SpeechSynthesis` / `VisionUnderstanding` / `SceneAnalysis` / `ProactiveResponse`
+    - [x] 工具调用相关任务：`ToolCalling` / `CodeToolExecution`
 
 #### 1.5.3.2 TaskType工具函数
-- [ ] **实现TaskType工具函数**
-  - [ ] `taskTypeToString()` - 枚举转字符串
-  - [ ] `stringToTaskType()` - 字符串转枚举
-  - [ ] `getTaskTypeDescription()` - 获取任务类型描述
-  - [ ] `isCodeRelatedTask()` - 判断是否为代码相关任务
-  - [ ] `isMultimodalTask()` - 判断是否为多模态任务
+- [x] **实现TaskType工具函数**
+  - [x] `taskTypeToString()` - 枚举转字符串
+  - [x] `stringToTaskType()` - 字符串转枚举（大小写不敏感）
+  - [x] `getTaskTypeDescription()` - 获取任务类型描述
+  - [x] `isCodeRelatedTask()` - 判断是否为代码相关任务
+  - [x] `isMultimodalTask()` - 判断是否为多模态任务
 
 ### 1.5.4 聊天消息结构（ChatMessage）
 
 #### 1.5.4.1 定义ChatMessage结构
-- [ ] **创建ChatMessage.h文件**
-  - [ ] 定义 `ChatMessage` 结构体
-    - [ ] role（角色：system/user/assistant/tool）
-    - [ ] content（内容：字符串或结构化内容）
-    - [ ] name（可选，工具调用时的工具名）
-    - [ ] toolCallId（可选，工具调用ID）
-  - [ ] 定义消息角色枚举 `MessageRole`
+- [x] **创建ChatMessage.h文件**
+  - [x] 定义 `ChatMessage` 结构体（文本优先实现）
+    - [x] role（角色：system/user/assistant/tool）
+    - [x] content（文本优先：string；非 string 时以 dump 形式占位，兼容多模态后续扩展）
+    - [x] name（可选，工具调用时的工具名）
+    - [x] toolCallId（可选，工具调用ID）
+  - [x] 定义消息角色枚举 `MessageRole`
 
 #### 1.5.4.2 多模态消息支持
-- [ ] **支持多模态内容**
+- [ ] **支持多模态内容（后续增强）**
   - [ ] 定义 `MessageContent` 类型（文本或内容数组）
   - [ ] 支持文本内容
   - [ ] 支持图像内容（base64编码或URL）
   - [ ] 支持混合内容（文本+图像）
 
 #### 1.5.4.3 ChatMessage工具函数
-- [ ] **实现工具函数**
-  - [ ] `ChatMessage::fromJson()` - 从JSON创建
-  - [ ] `ChatMessage::toJson()` - 转换为JSON
-  - [ ] `ChatMessage::estimateTokens()` - 估算Token数
-  - [ ] `ChatMessage::isValid()` - 验证消息有效性
+- [x] **实现工具函数**
+  - [x] `ChatMessage::fromJson()` - 从JSON创建（兼容 snake_case/camelCase 输入）
+  - [x] `ChatMessage::toJson()` - 转换为JSON（输出 snake_case）
+  - [x] `ChatMessage::estimateTokens()` - 文本估算Token数（后续可引入 role/多模态开销）
+  - [x] `ChatMessage::isValid()` - 验证消息有效性
 
 ### 1.5.5 模型配置结构（ModelConfig）
 
 #### 1.5.5.1 定义ModelConfig结构
-- [ ] **创建ModelConfig.h文件**
-  - [ ] 定义 `ModelConfig` 结构体
-    - [ ] modelId（模型ID，如 "deepseek-ai/DeepSeek-V3"）
-    - [ ] displayName（显示名称）
-    - [ ] supportedTasks（支持的任务类型列表）
-    - [ ] maxContextTokens（最大上下文Token数）
-    - [ ] defaultTemperature（默认温度参数）
-    - [ ] defaultMaxTokens（默认最大生成Token数）
-    - [ ] costPer1kTokens（每1K Token的成本）
-    - [ ] maxConcurrentRequests（最大并发请求数）
-    - [ ] supportsStreaming（是否支持流式响应）
-    - [ ] recommendedPromptStyle（推荐的提示词风格）
-    - [ ] performanceScore（性能评分，0-1）
+- [x] **创建ModelConfig.h文件**
+  - [x] 定义 `ModelConfig` 结构体
+    - [x] modelId（模型ID，如 "deepseek-ai/DeepSeek-V3"）
+    - [x] displayName（显示名称）
+    - [x] supportedTasks（支持的任务类型列表）
+    - [x] maxContextTokens（最大上下文Token数）
+    - [x] defaultTemperature（默认温度参数）
+    - [x] defaultMaxTokens（默认最大生成Token数）
+    - [x] costPer1kTokens（每1K Token的成本）
+    - [x] maxConcurrentRequests（最大并发请求数）
+    - [x] supportsStreaming（是否支持流式响应）
+    - [x] recommendedPromptStyle（推荐的提示词风格，可选）
+    - [x] performanceScore（性能评分，0-1）
 
 #### 1.5.5.2 ModelConfig工具函数
-- [ ] **实现工具函数**
-  - [ ] `ModelConfig::fromJson()` - 从JSON创建
-  - [ ] `ModelConfig::toJson()` - 转换为JSON
-  - [ ] `ModelConfig::supportsTask()` - 检查是否支持任务类型
-  - [ ] `ModelConfig::isValid()` - 验证配置有效性
+- [x] **实现工具函数**
+  - [x] `ModelConfig::fromJson()` - 从JSON创建（兼容 snake_case/camelCase）
+  - [x] `ModelConfig::toJson()` - 转换为JSON（输出 snake_case）
+  - [x] `ModelConfig::supportsTask()` - 检查是否支持任务类型
+  - [x] `ModelConfig::isValid()` - 验证配置有效性
 
 ### 1.5.6 请求/响应结构（ChatRequest/ChatResponse）
 
 #### 1.5.6.1 定义ChatRequest结构
-- [ ] **创建RequestResponse.h文件**
-  - [ ] 定义 `ChatRequest` 结构体
-    - [ ] model（模型ID）
-    - [ ] messages（消息列表）
-    - [ ] temperature（温度参数）
-    - [ ] maxTokens（最大生成Token数）
-    - [ ] stream（是否流式响应）
-    - [ ] stopSequence（停止序列，可选）
-    - [ ] topP（Top-p采样，可选）
-    - [ ] topK（Top-k采样，可选）
-    - [ ] tools（工具列表，Function Calling）
-    - [ ] toolChoice（工具选择策略）
+- [x] **创建RequestResponse.h文件**
+  - [x] 定义 `ChatRequest` 结构体
+    - [x] model（模型ID）
+    - [x] messages（消息列表）
+    - [x] temperature（温度参数，可选）
+    - [x] maxTokens（最大生成Token数，可选；支持 snake_case/camelCase 输入）
+    - [x] stream（是否流式响应，可选）
+    - [x] stop（停止序列，可选）
+    - [x] topP（Top-p采样，可选；支持 snake_case/camelCase 输入）
+    - [x] topK（Top-k采样，可选；支持 snake_case/camelCase 输入）
+    - [x] tools（工具列表，Function Calling）
+    - [x] toolChoice（工具选择策略）
 
 #### 1.5.6.2 定义ChatResponse结构
-- [ ] **定义ChatResponse结构**
-  - [ ] content（响应内容）
-  - [ ] toolCalls（工具调用列表）
-  - [ ] finishReason（完成原因：stop/tool_calls/length等）
-  - [ ] promptTokens（提示Token数）
-  - [ ] completionTokens（完成Token数）
-  - [ ] totalTokens（总Token数）
-  - [ ] model（使用的模型ID）
+- [x] **定义ChatResponse结构**
+  - [x] content（响应内容）
+  - [x] toolCalls（工具调用列表）
+  - [x] finishReason（完成原因：stop/tool_calls/length等）
+  - [x] promptTokens（提示Token数）
+  - [x] completionTokens（完成Token数）
+  - [x] totalTokens（总Token数）
+  - [x] model（使用的模型ID，可选）
 
 #### 1.5.6.3 工具调用结构
-- [ ] **定义工具调用相关结构**
-  - [ ] `ToolCall` 结构体（id, type, function）
-  - [ ] `FunctionCall` 结构体（name, arguments）
-  - [ ] `Tool` 结构体（Function Calling工具定义）
+- [x] **定义工具调用相关结构**
+  - [x] `ToolCall` 结构体（id, type, function）
+  - [x] `FunctionCall` 结构体（name, arguments）
+  - [x] `Tool` 结构体（Function Calling工具定义；toJson 输出 OpenAI 兼容 schema）
 
 #### 1.5.6.4 请求/响应工具函数
-- [ ] **实现工具函数**
-  - [ ] `ChatRequest::fromJson()` - 从JSON创建
-  - [ ] `ChatRequest::toJson()` - 转换为JSON
-  - [ ] `ChatRequest::estimateTokens()` - 估算Token数
-  - [ ] `ChatResponse::fromJson()` - 从JSON创建
-  - [ ] `ChatResponse::toJson()` - 转换为JSON
-  - [ ] `ChatResponse::hasToolCalls()` - 检查是否有工具调用
+- [x] **实现工具函数**
+  - [x] `ChatRequest::fromJson()` - 从JSON创建（兼容 snake_case/camelCase）
+  - [x] `ChatRequest::toJson()` - 转换为JSON（输出 snake_case）
+  - [x] `ChatRequest::estimateTokens()` - 文本估算Token数
+  - [x] `ChatResponse::fromJson()` - 从JSON创建（兼容 OpenAI shape + 简化 shape）
+  - [x] `ChatResponse::toJson()` - 转换为JSON（输出 snake_case，简化结构）
+  - [x] `ChatResponse::hasToolCalls()` - 检查是否有工具调用
 
 ### 1.5.7 任务优先级枚举（TaskPriority）
 
 #### 1.5.7.1 定义TaskPriority枚举
-- [ ] **创建TaskPriority.h文件**
-  - [ ] 定义 `TaskPriority` 枚举类
-    - [ ] `Critical` - 关键任务（最高优先级）
-    - [ ] `High` - 高优先级
-    - [ ] `Normal` - 普通优先级（默认）
-    - [ ] `Low` - 低优先级
+- [x] **创建TaskPriority.h文件**
+  - [x] 定义 `TaskPriority` 枚举类
+    - [x] `Critical` - 关键任务（最高优先级）
+    - [x] `High` - 高优先级
+    - [x] `Normal` - 普通优先级（默认）
+    - [x] `Low` - 低优先级
 
 #### 1.5.7.2 TaskPriority工具函数
-- [ ] **实现工具函数**
-  - [ ] `taskPriorityToString()` - 枚举转字符串
-  - [ ] `stringToTaskPriority()` - 字符串转枚举
-  - [ ] `comparePriority()` - 比较优先级
+- [x] **实现工具函数**
+  - [x] `taskPriorityToString()` - 枚举转字符串
+  - [x] `stringToTaskPriority()` - 字符串转枚举（大小写不敏感）
+  - [x] `comparePriority()` - 比较优先级
 
 ### 1.5.8 通用类型定义（CommonTypes）
 
 #### 1.5.8.1 定义通用类型
-- [ ] **创建CommonTypes.h文件**
-  - [ ] 定义常用类型别名
-  - [ ] 定义时间戳类型
-  - [ ] 定义请求ID类型
-  - [ ] 定义配置路径类型
+- [x] **创建CommonTypes.h文件**
+  - [x] 定义常用类型别名
+  - [x] 定义时间戳类型
+  - [x] 定义请求ID类型
+  - [x] 定义配置路径类型
 
 ### 1.5.9 单元测试
-- [ ] **TaskType测试**
-  - [ ] 枚举转换测试
-  - [ ] 工具函数测试
+- [x] **TaskType测试**
+  - [x] 枚举转换测试
+  - [x] 工具函数测试
 
-- [ ] **ChatMessage测试**
-  - [ ] JSON序列化/反序列化测试
-  - [ ] Token估算测试
-  - [ ] 多模态消息测试
+- [x] **ChatMessage测试**
+  - [x] JSON序列化/反序列化测试
+  - [x] Token估算测试
+  - [ ] 多模态消息测试（后续增强）
 
-- [ ] **ModelConfig测试**
-  - [ ] JSON序列化/反序列化测试
-  - [ ] 任务支持检查测试
-  - [ ] 配置验证测试
+- [x] **ModelConfig测试**
+  - [x] JSON序列化/反序列化测试
+  - [x] 任务支持检查测试
+  - [x] 配置验证测试
 
-- [ ] **请求/响应测试**
-  - [ ] JSON序列化/反序列化测试
-  - [ ] Token估算测试
-  - [ ] 工具调用测试
+- [x] **请求/响应测试**
+  - [x] JSON序列化/反序列化测试
+  - [x] Token估算测试
+  - [x] 工具调用测试
 
-- [ ] **TaskPriority测试**
-  - [ ] 枚举转换测试
-  - [ ] 优先级比较测试
+- [x] **TaskPriority测试**
+  - [x] 枚举转换测试
+  - [x] 优先级比较测试
 
 ---
 
@@ -843,22 +822,22 @@ include/naw/desktop_pet/service/types/
 ## 进度追踪
 
 ### 1.1 HTTP客户端封装
-- [ ] HTTP库选择与集成
-- [ ] HTTP请求封装
-- [ ] HTTP响应处理
-- [ ] 异步HTTP请求
-- [ ] 连接池管理
-- [ ] 重试机制基础框架
-- [ ] 单元测试
+- [x] HTTP库选择与集成
+- [x] HTTP请求封装
+- [x] HTTP响应处理
+- [x] 异步HTTP请求
+- [x] 连接池管理
+- [x] 重试机制基础框架
+- [x] 单元测试
 
-**进度**: 0/7 主要模块完成
+**进度**: 7/7 主要模块完成
 
 ### 1.2 工具类实现
 - [x] Token计数器（TokenCounter）
-- [ ] 音频处理器（AudioProcessor）
-- [ ] 单元测试
+- [x] 音频处理器（AudioProcessor）
+- [x] 单元测试
 
-**进度**: 0/3 主要模块完成
+**进度**: 3/3 主要模块完成
 
 ### 1.3 错误处理系统
 - [x] 错误类型定义
@@ -870,27 +849,27 @@ include/naw/desktop_pet/service/types/
 **进度**: 5/5 主要模块完成
 
 ### 1.4 配置管理系统
-- [ ] 配置文件结构设计
-- [ ] 配置文件加载
-- [ ] 配置验证
-- [ ] 环境变量支持
+- [x] 配置文件结构设计
+- [x] 配置文件加载
+- [x] 配置验证
+- [x] 环境变量支持
 - [ ] 配置热重载（可选）
-- [ ] 单元测试
+- [x] 单元测试
 
-**进度**: 0/6 主要模块完成
+**进度**: 5/6 主要模块完成
 
 ### 1.5 基础数据结构定义
-- [ ] 任务类型枚举（TaskType）
-- [ ] 聊天消息结构（ChatMessage）
-- [ ] 模型配置结构（ModelConfig）
-- [ ] 请求/响应结构（ChatRequest/ChatResponse）
-- [ ] 任务优先级枚举（TaskPriority）
-- [ ] 通用类型定义
-- [ ] 单元测试
+- [x] 任务类型枚举（TaskType）
+- [x] 聊天消息结构（ChatMessage）
+- [x] 模型配置结构（ModelConfig）
+- [x] 请求/响应结构（ChatRequest/ChatResponse）
+- [x] 任务优先级枚举（TaskPriority）
+- [x] 通用类型定义
+- [x] 单元测试
 
-**进度**: 0/7 主要模块完成
+**进度**: 7/7 主要模块完成
 
-**总计**: 5/28 主要模块完成
+**总计**: 27/28 主要模块完成
 
 ---
 
@@ -920,4 +899,4 @@ include/naw/desktop_pet/service/types/
 
 ---
 
-*最后更新: 2025年12月16日*
+*最后更新: 2025年12月18日*
