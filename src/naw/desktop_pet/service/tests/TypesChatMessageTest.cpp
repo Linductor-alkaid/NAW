@@ -86,18 +86,21 @@ int main() {
                          };
                          auto m = ChatMessage::fromJson(j);
                          CHECK_TRUE(m.has_value());
-                         CHECK_EQ(m->content, "hello");
+                         CHECK_TRUE(m->isText());
+                         CHECK_TRUE(m->textView().has_value());
+                         CHECK_EQ(std::string(*m->textView()), "hello");
                          CHECK_EQ(roleToString(m->role), "user");
                      }});
 
-    tests.push_back({"FromJsonAcceptsNonStringContentByDump", []() {
+    tests.push_back({"FromJsonMultimodalTextArray", []() {
                          nlohmann::json j = {
                              {"role", "assistant"},
                              {"content", nlohmann::json::array({{{"type", "text"}, {"text", "hi"}}})},
                          };
                          auto m = ChatMessage::fromJson(j);
                          CHECK_TRUE(m.has_value());
-                         CHECK_FALSE(m->content.empty());
+                         CHECK_FALSE(m->isText());
+                         CHECK_TRUE(m->isValid());
                      }});
 
     tests.push_back({"ToolCallIdCamelCaseCompatibility", []() {
@@ -120,7 +123,7 @@ int main() {
     tests.push_back({"IsValidRejectsEmptyContent", []() {
                          ChatMessage m;
                          m.role = MessageRole::User;
-                         m.content = "";
+                         m.setText("");
                          std::string reason;
                          CHECK_FALSE(m.isValid(&reason));
                          CHECK_FALSE(reason.empty());
@@ -129,9 +132,59 @@ int main() {
     tests.push_back({"EstimateTokensNonZeroForText", []() {
                          ChatMessage m;
                          m.role = MessageRole::User;
-                         m.content = "hello world";
+                         m.setText("hello world");
                          auto n = m.estimateTokens("deepseek-ai/DeepSeek-V3");
                          CHECK_TRUE(n > 0);
+                     }});
+
+    tests.push_back({"MultimodalImageUrlHttp", []() {
+                         nlohmann::json j = {
+                             {"role", "user"},
+                             {"content",
+                              nlohmann::json::array({
+                                  {{"type", "text"}, {"text", "look"}},
+                                  {{"type", "image_url"}, {"image_url", {{"url", "https://example.com/a.png"}}}},
+                              })},
+                         };
+                         auto m = ChatMessage::fromJson(j);
+                         CHECK_TRUE(m.has_value());
+                         CHECK_TRUE(m->isValid());
+                         auto out = m->toJson();
+                         CHECK_TRUE(out["content"].is_array());
+                     }});
+
+    tests.push_back({"MultimodalImageUrlDataBase64", []() {
+                         // Minimal PNG header base64 (not a full image, but enough for decode + non-empty)
+                         const std::string dataUrl = "data:image/png;base64,iVBORw0KGgo=";
+                         nlohmann::json j = {
+                             {"role", "user"},
+                             {"content",
+                              nlohmann::json::array({
+                                  {{"type", "image_url"}, {"image_url", {{"url", dataUrl}}}},
+                              })},
+                         };
+                         auto m = ChatMessage::fromJson(j);
+                         CHECK_TRUE(m.has_value());
+                         CHECK_TRUE(m->isValid());
+
+                         auto tokens = m->estimateTokens("deepseek-ai/DeepSeek-V3");
+                         CHECK_TRUE(tokens >= 200);
+                     }});
+
+    tests.push_back({"MultimodalRejectsInvalidBase64", []() {
+                         const std::string bad = "data:image/png;base64,@@@";
+                         nlohmann::json j = {
+                             {"role", "user"},
+                             {"content",
+                              nlohmann::json::array({
+                                  {{"type", "image_url"}, {"image_url", {{"url", bad}}}},
+                              })},
+                         };
+                         auto m = ChatMessage::fromJson(j);
+                         CHECK_TRUE(m.has_value());
+                         std::string reason;
+                         CHECK_FALSE(m->isValid(&reason));
+                         CHECK_FALSE(reason.empty());
                      }});
 
     return mini_test::run(tests);

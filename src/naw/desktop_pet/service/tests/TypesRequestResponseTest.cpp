@@ -95,7 +95,7 @@ int main() {
     tests.push_back({"ChatRequestJsonSnakeCaseOutput", []() {
                          ChatRequest r;
                          r.model = "deepseek-ai/DeepSeek-V3";
-                         r.messages.push_back(ChatMessage{MessageRole::User, "hi", std::nullopt, std::nullopt});
+                         r.messages.push_back(ChatMessage{MessageRole::User, "hi"});
                          r.maxTokens = 123;
                          r.topP = 0.9f;
                          r.toolChoice = "auto";

@@ -171,9 +171,8 @@ struct ChatRequest {
 
     std::size_t estimateTokens() const {
         // Text-only estimation for messages' content.
-        naw::desktop_pet::service::utils::TokenEstimator est;
         std::size_t total = 0;
-        for (const auto& m : messages) total += est.estimateTokens(model, m.content);
+        for (const auto& m : messages) total += m.estimateTokens(model);
         return total;
     }
 };

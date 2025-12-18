@@ -658,25 +658,26 @@ include/naw/desktop_pet/service/types/
 
 #### 1.5.4.1 定义ChatMessage结构
 - [x] **创建ChatMessage.h文件**
-  - [x] 定义 `ChatMessage` 结构体（文本优先实现）
+  - [x] 定义 `ChatMessage` 结构体（SiliconFlow/OpenAI 兼容：支持文本与多模态数组）
     - [x] role（角色：system/user/assistant/tool）
-    - [x] content（文本优先：string；非 string 时以 dump 形式占位，兼容多模态后续扩展）
+    - [x] content（支持 string 或 content 数组：text/image_url）
     - [x] name（可选，工具调用时的工具名）
     - [x] toolCallId（可选，工具调用ID）
   - [x] 定义消息角色枚举 `MessageRole`
 
 #### 1.5.4.2 多模态消息支持
-- [ ] **支持多模态内容（后续增强）**
-  - [ ] 定义 `MessageContent` 类型（文本或内容数组）
-  - [ ] 支持文本内容
-  - [ ] 支持图像内容（base64编码或URL）
-  - [ ] 支持混合内容（文本+图像）
+- [x] **支持多模态内容（兼容 SiliconFlow/OpenAI）**
+  - [x] 定义 `MessageContent` 类型（文本或内容数组：text/image_url）
+  - [x] 支持文本内容（`{type:\"text\", text:\"...\"}`）
+  - [x] 支持图像内容（`{type:\"image_url\", image_url:{url:\"http(s)://...\"}}`）
+  - [x] 支持 data URL（base64）：`data:image/<png|jpg|jpeg|webp>;base64,...`（轻量校验）
+  - [x] 支持混合内容（文本+图像）
 
 #### 1.5.4.3 ChatMessage工具函数
 - [x] **实现工具函数**
-  - [x] `ChatMessage::fromJson()` - 从JSON创建（兼容 snake_case/camelCase 输入）
-  - [x] `ChatMessage::toJson()` - 转换为JSON（输出 snake_case）
-  - [x] `ChatMessage::estimateTokens()` - 文本估算Token数（后续可引入 role/多模态开销）
+  - [x] `ChatMessage::fromJson()` - 从JSON创建（兼容 snake_case/camelCase；支持 OpenAI content array）
+  - [x] `ChatMessage::toJson()` - 转换为JSON（输出 OpenAI 兼容 content 结构）
+  - [x] `ChatMessage::estimateTokens()` - 粗略估算Token数（text 使用 TokenEstimator；image_url 使用固定/按大小估算）
   - [x] `ChatMessage::isValid()` - 验证消息有效性
 
 ### 1.5.5 模型配置结构（ModelConfig）
@@ -777,7 +778,7 @@ include/naw/desktop_pet/service/types/
 - [x] **ChatMessage测试**
   - [x] JSON序列化/反序列化测试
   - [x] Token估算测试
-  - [ ] 多模态消息测试（后续增强）
+  - [x] 多模态消息测试（text+image_url，含 data URL base64 校验）
 
 - [x] **ModelConfig测试**
   - [x] JSON序列化/反序列化测试
