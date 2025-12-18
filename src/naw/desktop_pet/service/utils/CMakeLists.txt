@@ -1,7 +1,7 @@
 # 选项控制示例构建
 option(BUILD_HTTPCLIENT_EXAMPLE "Build http_client_example" OFF)
 option(BUILD_AUDIOPROCESSOR_EXAMPLE "Build audio_processor_example" ON)
-option(BUILD_TESTING "Build testing" OFF)
+option(BUILD_TESTING "Build testing" ON)
 # Service Utils 模块 CMakeLists.txt
 # HTTP客户端工具模块
 
@@ -121,6 +121,9 @@ if(BUILD_TESTING)
     add_executable(TokenUsageClientTest
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/TokenUsageClientTest.cpp
     )
+    add_executable(AudioProcessorTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/AudioProcessorTest.cpp
+    )
     if(MSVC)
         # 关闭 HttpClientTest 的 LTCG，避免测试注册符号被链接器裁剪
         target_compile_options(HttpClientTest PRIVATE /GL-)
@@ -129,6 +132,8 @@ if(BUILD_TESTING)
         target_link_options(TokenCounterTest PRIVATE /LTCG:OFF /INCREMENTAL)
         target_compile_options(TokenUsageClientTest PRIVATE /GL-)
         target_link_options(TokenUsageClientTest PRIVATE /LTCG:OFF /INCREMENTAL)
+        target_compile_options(AudioProcessorTest PRIVATE /GL-)
+        target_link_options(AudioProcessorTest PRIVATE /LTCG:OFF /INCREMENTAL)
     endif()
     target_link_libraries(HttpClientTest
         PRIVATE
@@ -142,12 +147,18 @@ if(BUILD_TESTING)
         PRIVATE
             NAW_ServiceUtils
     )
+    target_link_libraries(AudioProcessorTest
+        PRIVATE
+            NAW_ServiceUtils
+    )
     target_include_directories(HttpClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_include_directories(TokenCounterTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     target_include_directories(TokenUsageClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    target_include_directories(AudioProcessorTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME HttpClientTest COMMAND HttpClientTest)
     add_test(NAME TokenCounterTest COMMAND TokenCounterTest)
     add_test(NAME TokenUsageClientTest COMMAND TokenUsageClientTest)
+    add_test(NAME AudioProcessorTest COMMAND AudioProcessorTest)
 endif()
 
 if(BUILD_HTTPCLIENT_EXAMPLE)

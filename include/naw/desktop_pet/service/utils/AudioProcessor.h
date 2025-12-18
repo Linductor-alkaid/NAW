@@ -21,6 +21,47 @@ enum class AudioFormat {
     S16,
 };
 
+enum class AudioErrorCode : std::uint8_t {
+    None = 0,
+    NotInitialized,
+    InvalidArgs,
+    NotFound,
+    Unsupported,
+    DeviceInitFailed,
+    DeviceStartFailed,
+    DeviceStopFailed,
+    DecoderFailed,
+    EncoderFailed,
+    IoFailed,
+    BufferOverflow,
+    BufferUnderrun,
+    InternalError,
+};
+
+struct AudioError {
+    AudioErrorCode code{AudioErrorCode::None};
+    std::string message{};
+};
+
+struct AudioStats {
+    // 基础信息
+    double durationSeconds{0.0};
+    std::uint64_t frames{0};
+    std::uint32_t sampleRate{0};
+    std::uint32_t channels{0};
+    AudioFormat format{AudioFormat::S16};
+
+    // 幅度/能量
+    float peakAbs{0.0f}; // [0,1]（按格式归一化后的绝对峰值）
+    float rms{0.0f};     // [0,1]（按格式归一化后的 RMS）
+    float dbfs{-90.0f};  // 估算 dBFS
+
+    // 质量/剪裁判定
+    bool isSilent{false};
+    bool isLikelyClipped{false};
+    float clippedSampleRatio{0.0f}; // 接近满幅样本占比（粗略）
+};
+
 struct AudioStreamConfig {
     AudioFormat format{AudioFormat::S16};   // 默认使用设备常见格式
     std::uint32_t sampleRate{0};            // 0 表示使用设备默认采样率
@@ -39,6 +80,7 @@ struct CaptureOptions {
     bool storeInMemory{true};
     std::size_t maxFramesInBuffer{48000 * 10}; // 默认最多缓存10秒的PCM
     std::function<void(const void* pcm, std::size_t bytes, std::uint32_t frames)> onData;
+    std::function<void(const AudioError& err)> onError; // 可选：错误回调（不会抛异常）
 };
 
 struct CapturedBuffer {
@@ -77,6 +119,14 @@ public:
     bool initialize(const AudioStreamConfig& playbackConfig = {});
     void shutdown();
     bool isInitialized() const { return initialized_; }
+
+    // ---- 错误观测 ----
+    /**
+     * @brief 获取最近一次错误（若无错误则返回 std::nullopt）
+     * 说明：用于补齐“音频流错误处理”的可观测性；不影响现有返回值语义。
+     */
+    std::optional<AudioError> lastError() const;
+    void clearLastError();
 
     // ---- 播放 ----
     std::optional<std::uint32_t> playFile(const std::string& path, const PlaybackOptions& opts = {});
@@ -117,6 +167,25 @@ public:
     CapturedBuffer capturedBuffer() const;
     bool saveCapturedWav(const std::string& path) const;
 
+    // ---- 预处理/验证/分析（纯内存，便于测试）----
+    static std::optional<AudioError> validatePcmBuffer(const AudioStreamConfig& stream,
+                                                       std::size_t pcmBytes,
+                                                       std::size_t minFrames = 0,
+                                                       std::size_t maxFrames = 0);
+    static AudioStats analyzePcm(const AudioStreamConfig& stream,
+                                 const void* pcm,
+                                 std::size_t bytes);
+    static bool applyGainInPlace(const AudioStreamConfig& stream,
+                                 std::vector<std::uint8_t>& pcm,
+                                 float gainDb);
+    static bool normalizePeakInPlace(const AudioStreamConfig& stream,
+                                     std::vector<std::uint8_t>& pcm,
+                                     float targetPeakDb = -1.0f);
+    static bool trimSilenceInPlace(const AudioStreamConfig& stream,
+                                   std::vector<std::uint8_t>& pcm,
+                                   float thresholdDb,
+                                   std::uint32_t minKeepMs = 0);
+
     // ---- 格式与转换 ----
     std::optional<AudioStreamConfig> probeFile(const std::string& path) const;
     std::optional<CapturedBuffer> decodeFileToPCM(const std::string& path,
@@ -149,6 +218,10 @@ private:
     mutable std::mutex soundMutex_;
     std::unordered_map<std::uint32_t, std::unique_ptr<SoundHandle>> sounds_;
     std::atomic<std::uint32_t> nextSoundId_{1};
+
+    // 错误记录（线程安全）
+    mutable std::mutex lastErrorMutex_;
+    mutable std::optional<AudioError> lastError_{};
 
     // 播放上下文
     void* engine_{nullptr}; // 实际类型为 ma_engine*
@@ -203,6 +276,8 @@ private:
     std::size_t frameSizeBytes(const AudioStreamConfig& cfg) const;
     bool addSoundHandle(std::uint32_t id, void* sound);
     void removeSoundHandle(std::uint32_t id);
+    void setLastError(AudioErrorCode code, const std::string& message) const;
+    void reportError(const CaptureOptions& opts, AudioErrorCode code, const std::string& message) const;
     float computeDb(const void* pcm, std::uint32_t frames) const;
     void ensureRingCapacity(std::size_t bytes, std::size_t bytesPerFrame);
     void pushRing(const void* pcm, std::size_t bytes);

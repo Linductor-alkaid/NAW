@@ -10,6 +10,7 @@
 #include <miniaudio.h>
 #include <thread>
 #include <iostream>
+#include <limits>
 
 namespace {
 ma_device* toDevice(void* ptr) { return reinterpret_cast<ma_device*>(ptr); }
@@ -179,8 +180,200 @@ static float dbfsFromRms(float rms) {
     return 20.0f * std::log10(rms);
 }
 
+static std::size_t bytesPerSampleFor(naw::desktop_pet::service::utils::AudioFormat fmt) {
+    return fmt == naw::desktop_pet::service::utils::AudioFormat::S16 ? sizeof(std::int16_t) : sizeof(float);
+}
+
 std::size_t AudioProcessor::frameSizeBytes(const AudioStreamConfig& cfg) const {
     return ma_get_bytes_per_sample(toMiniaudioFormat(cfg.format)) * cfg.channels;
+}
+
+std::optional<AudioError> AudioProcessor::lastError() const {
+    std::lock_guard<std::mutex> lock(lastErrorMutex_);
+    return lastError_;
+}
+
+void AudioProcessor::clearLastError() {
+    std::lock_guard<std::mutex> lock(lastErrorMutex_);
+    lastError_.reset();
+}
+
+void AudioProcessor::setLastError(AudioErrorCode code, const std::string& message) const {
+    std::lock_guard<std::mutex> lock(lastErrorMutex_);
+    lastError_ = AudioError{code, message};
+}
+
+void AudioProcessor::reportError(const CaptureOptions& opts, AudioErrorCode code, const std::string& message) const {
+    setLastError(code, message);
+    if (opts.onError) {
+        opts.onError(AudioError{code, message});
+    }
+}
+
+std::optional<AudioError> AudioProcessor::validatePcmBuffer(const AudioStreamConfig& stream,
+                                                            std::size_t pcmBytes,
+                                                            std::size_t minFrames,
+                                                            std::size_t maxFrames) {
+    if (stream.sampleRate == 0 || stream.channels == 0) {
+        return AudioError{AudioErrorCode::InvalidArgs, "invalid AudioStreamConfig: sampleRate/channels must be non-zero"};
+    }
+    if (!(stream.channels >= 1 && stream.channels <= 8)) {
+        return AudioError{AudioErrorCode::InvalidArgs, "invalid AudioStreamConfig: channels out of range"};
+    }
+    if (!(stream.sampleRate >= 8000 && stream.sampleRate <= 192000)) {
+        return AudioError{AudioErrorCode::InvalidArgs, "invalid AudioStreamConfig: sampleRate out of range"};
+    }
+    const std::size_t bps = bytesPerSampleFor(stream.format);
+    if (bps == 0) {
+        return AudioError{AudioErrorCode::InvalidArgs, "invalid AudioStreamConfig: unknown format"};
+    }
+    const std::size_t bpf = bps * stream.channels;
+    if (bpf == 0) {
+        return AudioError{AudioErrorCode::InvalidArgs, "invalid AudioStreamConfig: frame size is zero"};
+    }
+    if (pcmBytes == 0) {
+        return AudioError{AudioErrorCode::InvalidArgs, "pcmBytes is zero"};
+    }
+    if (pcmBytes % bpf != 0) {
+        return AudioError{AudioErrorCode::InvalidArgs, "pcmBytes is not frame-aligned"};
+    }
+    const std::size_t frames = pcmBytes / bpf;
+    if (minFrames > 0 && frames < minFrames) {
+        return AudioError{AudioErrorCode::InvalidArgs, "pcm too short"};
+    }
+    if (maxFrames > 0 && frames > maxFrames) {
+        return AudioError{AudioErrorCode::InvalidArgs, "pcm too long"};
+    }
+    return std::nullopt;
+}
+
+AudioStats AudioProcessor::analyzePcm(const AudioStreamConfig& stream, const void* pcm, std::size_t bytes) {
+    AudioStats st{};
+    st.sampleRate = stream.sampleRate;
+    st.channels = stream.channels;
+    st.format = stream.format;
+
+    const auto err = validatePcmBuffer(stream, bytes);
+    if (err.has_value() || pcm == nullptr) {
+        st.isSilent = true;
+        st.dbfs = -90.0f;
+        return st;
+    }
+
+    const std::size_t bps = bytesPerSampleFor(stream.format);
+    const std::size_t bpf = bps * stream.channels;
+    const std::size_t frames = bytes / bpf;
+    const std::size_t samples = frames * stream.channels;
+    st.frames = static_cast<std::uint64_t>(frames);
+    st.durationSeconds = stream.sampleRate ? (static_cast<double>(frames) / static_cast<double>(stream.sampleRate)) : 0.0;
+
+    double accum = 0.0;
+    float peak = 0.0f;
+    std::size_t clippedCount = 0;
+    const float clipThreshold = 0.999f;
+
+    if (stream.format == AudioFormat::S16) {
+        const auto* p = static_cast<const std::int16_t*>(pcm);
+        for (std::size_t i = 0; i < samples; ++i) {
+            const float v = static_cast<float>(p[i]) / 32768.0f;
+            const float a = std::abs(v);
+            peak = std::max(peak, a);
+            accum += static_cast<double>(v) * static_cast<double>(v);
+            if (a >= clipThreshold) {
+                clippedCount++;
+            }
+        }
+    } else {
+        const auto* p = static_cast<const float*>(pcm);
+        for (std::size_t i = 0; i < samples; ++i) {
+            const float v = p[i];
+            const float a = std::abs(v);
+            peak = std::max(peak, a);
+            accum += static_cast<double>(v) * static_cast<double>(v);
+            if (a >= clipThreshold) {
+                clippedCount++;
+            }
+        }
+    }
+
+    const double rms = std::sqrt(accum / static_cast<double>(samples));
+    st.peakAbs = peak;
+    st.rms = static_cast<float>(rms);
+    st.dbfs = dbfsFromRms(static_cast<float>(rms));
+    st.clippedSampleRatio = samples ? static_cast<float>(static_cast<double>(clippedCount) / static_cast<double>(samples)) : 0.0f;
+
+    st.isSilent = (st.rms <= 1e-4f);
+    st.isLikelyClipped = (st.peakAbs >= 0.999f && st.clippedSampleRatio >= 0.002f);
+    return st;
+}
+
+bool AudioProcessor::applyGainInPlace(const AudioStreamConfig& stream, std::vector<std::uint8_t>& pcm, float gainDb) {
+    const auto err = validatePcmBuffer(stream, pcm.size());
+    if (err.has_value()) {
+        return false;
+    }
+    const float gain = std::pow(10.0f, gainDb / 20.0f);
+    if (!(gain > 0.0f) || !std::isfinite(gain)) {
+        return false;
+    }
+    const std::size_t bps = bytesPerSampleFor(stream.format);
+    const std::size_t samples = pcm.size() / bps;
+    if (stream.format == AudioFormat::S16) {
+        auto* p = reinterpret_cast<std::int16_t*>(pcm.data());
+        for (std::size_t i = 0; i < samples; ++i) {
+            const float v = static_cast<float>(p[i]) * gain;
+            const float clamped = std::min(32767.0f, std::max(-32768.0f, v));
+            p[i] = static_cast<std::int16_t>(std::lrint(clamped));
+        }
+    } else {
+        auto* p = reinterpret_cast<float*>(pcm.data());
+        for (std::size_t i = 0; i < samples; ++i) {
+            const float v = p[i] * gain;
+            p[i] = std::isfinite(v) ? v : 0.0f;
+        }
+    }
+    return true;
+}
+
+bool AudioProcessor::normalizePeakInPlace(const AudioStreamConfig& stream, std::vector<std::uint8_t>& pcm, float targetPeakDb) {
+    const auto st = analyzePcm(stream, pcm.data(), pcm.size());
+    if (st.peakAbs <= 1e-6f) {
+        return false;
+    }
+    const float targetPeak = std::pow(10.0f, targetPeakDb / 20.0f);
+    if (!(targetPeak > 0.0f) || !std::isfinite(targetPeak)) {
+        return false;
+    }
+    const float gain = targetPeak / st.peakAbs;
+    const float gainDb = 20.0f * std::log10(std::max(1e-9f, gain));
+    return applyGainInPlace(stream, pcm, gainDb);
+}
+
+bool AudioProcessor::trimSilenceInPlace(const AudioStreamConfig& stream,
+                                        std::vector<std::uint8_t>& pcm,
+                                        float thresholdDb,
+                                        std::uint32_t minKeepMs) {
+    const auto err = validatePcmBuffer(stream, pcm.size());
+    if (err.has_value()) {
+        return false;
+    }
+    // 使用现有算法裁剪头尾静音
+    AudioProcessor tmp;
+    if (!tmp.trimSilence(stream, pcm, thresholdDb)) {
+        return false;
+    }
+    if (pcm.empty()) {
+        return false;
+    }
+    if (minKeepMs > 0 && stream.sampleRate > 0) {
+        const std::size_t bpf = bytesPerSampleFor(stream.format) * stream.channels;
+        const std::size_t minFrames = static_cast<std::size_t>((static_cast<std::uint64_t>(minKeepMs) * stream.sampleRate) / 1000ULL);
+        const std::size_t minBytes = minFrames * bpf;
+        if (pcm.size() < minBytes) {
+            return false;
+        }
+    }
+    return true;
 }
 
 bool AudioProcessor::initialize(const AudioStreamConfig& playbackConfig) {
@@ -197,6 +390,7 @@ bool AudioProcessor::initialize(const AudioStreamConfig& playbackConfig) {
     auto* engine = new ma_engine();
     if (ma_engine_init(&cfg, engine) != MA_SUCCESS) {
         delete engine;
+        setLastError(AudioErrorCode::DeviceInitFailed, "ma_engine_init failed");
         return false;
     }
 
@@ -354,20 +548,24 @@ std::optional<std::uint32_t> AudioProcessor::startStream(const AudioStreamConfig
 
 bool AudioProcessor::appendStreamData(std::uint32_t soundId, const void* pcm, std::size_t bytes) {
     if (pcm == nullptr || bytes == 0) {
+        setLastError(AudioErrorCode::InvalidArgs, "appendStreamData: pcm is null or bytes is zero");
         return false;
     }
     std::lock_guard<std::mutex> lock(soundMutex_);
     auto it = sounds_.find(soundId);
     if (it == sounds_.end() || it->second->streamSource == nullptr) {
+        setLastError(AudioErrorCode::NotFound, "appendStreamData: soundId not found or not a stream");
         return false;
     }
     auto* src = reinterpret_cast<StreamSource*>(it->second->streamSource);
     if (bytes % src->bytesPerFrame != 0) {
+        setLastError(AudioErrorCode::InvalidArgs, "appendStreamData: bytes is not frame-aligned");
         return false;
     }
     const ma_uint64 frames = static_cast<ma_uint64>(bytes / src->bytesPerFrame);
     const ma_uint64 writable = ma_pcm_rb_available_write(&src->rb);
     if (writable < frames) {
+        setLastError(AudioErrorCode::BufferOverflow, "appendStreamData: ring buffer is full (insufficient writable frames)");
         return false; // 缓冲不足，调用方可重试
     }
 
@@ -377,11 +575,15 @@ bool AudioProcessor::appendStreamData(std::uint32_t soundId, const void* pcm, st
         ma_uint32 acquire = static_cast<ma_uint32>(frames - totalWritten);
         void* pWrite = nullptr;
         if (ma_pcm_rb_acquire_write(&src->rb, &acquire, &pWrite) != MA_SUCCESS || pWrite == nullptr || acquire == 0) {
+            setLastError(AudioErrorCode::InternalError, "appendStreamData: ma_pcm_rb_acquire_write failed");
             break;
         }
         std::memcpy(pWrite, srcBytes + totalWritten * src->bytesPerFrame, static_cast<std::size_t>(acquire) * src->bytesPerFrame);
         ma_pcm_rb_commit_write(&src->rb, acquire);
         totalWritten += acquire;
+    }
+    if (totalWritten != frames) {
+        setLastError(AudioErrorCode::InternalError, "appendStreamData: partial write");
     }
     return totalWritten == frames;
 }
@@ -644,6 +846,7 @@ bool AudioProcessor::startCapture(const CaptureOptions& opts) {
         auto* ctx = new ma_context();
         if (ma_context_init(nullptr, 0, nullptr, ctx) != MA_SUCCESS) {
             delete ctx;
+            reportError(opts, AudioErrorCode::DeviceInitFailed, "startCapture: ma_context_init failed");
             return false;
         }
         captureContext_ = ctx;
@@ -692,6 +895,7 @@ bool AudioProcessor::startCapture(const CaptureOptions& opts) {
         ma_context_uninit(ctx);
         delete ctx;
         captureContext_ = nullptr;
+        reportError(opts, AudioErrorCode::DeviceInitFailed, "startCapture: ma_device_init failed");
         return false;
     }
 
@@ -715,6 +919,7 @@ bool AudioProcessor::startCapture(const CaptureOptions& opts) {
         ma_device_uninit(device);
         delete device;
         captureDevice_ = nullptr;
+        reportError(opts, AudioErrorCode::DeviceStartFailed, "startCapture: ma_device_start failed");
     }
     return capturing_;
 }
@@ -725,7 +930,9 @@ void AudioProcessor::stopCapture() {
     }
 
     auto* device = toDevice(captureDevice_);
-    ma_device_stop(device);
+    if (ma_device_stop(device) != MA_SUCCESS) {
+        reportError(captureOptions_, AudioErrorCode::DeviceStopFailed, "stopCapture: ma_device_stop failed");
+    }
     ma_device_uninit(device);
     delete device;
     captureDevice_ = nullptr;
