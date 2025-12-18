@@ -2,6 +2,7 @@
 
 option(BUILD_SERVICE_FOUNDATION_TESTING "Build service foundation tests" OFF)
 option(BUILD_APICLIENT_CHAT_EXAMPLE "Build api_client_chat_example" ON)
+option(BUILD_STT_LLM_VOICE_CHAT_EXAMPLE "Build stt_llm_voice_chat_example" OFF)
 
 set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ErrorHandler.cpp
@@ -166,5 +167,18 @@ if(BUILD_APICLIENT_CHAT_EXAMPLE)
     endif()
     target_link_libraries(api_client_chat_example PRIVATE NAW_ServiceAPIClient)
     target_include_directories(api_client_chat_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
+endif()
+
+if(BUILD_STT_LLM_VOICE_CHAT_EXAMPLE)
+    add_executable(stt_llm_voice_chat_example
+        ${CMAKE_CURRENT_SOURCE_DIR}/examples/stt_llm_voice_chat_example.cpp
+    )
+    if(MSVC)
+        target_compile_options(stt_llm_voice_chat_example PRIVATE /GL-)
+        target_link_options(stt_llm_voice_chat_example PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    # APIClient 已 PUBLIC 依赖 NAW_ServiceUtils，因此示例能直接使用 HttpClient/AudioProcessor
+    target_link_libraries(stt_llm_voice_chat_example PRIVATE NAW_ServiceAPIClient)
+    target_include_directories(stt_llm_voice_chat_example PRIVATE ${CMAKE_SOURCE_DIR}/include)
 endif()
 
