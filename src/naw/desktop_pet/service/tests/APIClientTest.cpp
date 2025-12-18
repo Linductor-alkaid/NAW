@@ -220,6 +220,15 @@ int main() {
         } catch (const APIClient::ApiClientError& e) {
             CHECK_EQ(e.errorInfo().errorType, ErrorType::RateLimitError);
             CHECK_EQ(e.errorInfo().errorCode, 429);
+            // 上下文信息：至少包含 model/endpoint/url
+            CHECK_TRUE(e.errorInfo().context.has_value());
+            CHECK_EQ(e.errorInfo().context->at("model"), "m1");
+            CHECK_EQ(e.errorInfo().context->at("endpoint"), "/chat/completions");
+            CHECK_TRUE(e.errorInfo().context->at("url").find("/v1/chat/completions") != std::string::npos);
+
+            // 敏感信息：不得泄露明文 api_key
+            CHECK_TRUE(e.what() && std::string(e.what()).find("bad_key") == std::string::npos);
+            CHECK_TRUE(e.errorInfo().toString().find("bad_key") == std::string::npos);
         }
     }});
 

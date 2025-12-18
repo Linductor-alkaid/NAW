@@ -175,7 +175,24 @@ int main() {
         resp.headers = resp.multiHeaders.toFirstValueMap();
 
         const auto delayMs = h.getRetryDelayMs(e, 0, std::optional<HttpResponse>{resp});
-        CHECK_TRUE(delayMs >= 2000U);
+        CHECK_EQ(delayMs, 2000U);
+    }});
+
+    tests.push_back({"retry_after_header_has_priority_over_policy_backoff", []() {
+        auto p = ErrorHandler::RetryPolicy::makeDefault();
+        p.initialDelayMs = 5000;
+        p.enableJitter = false;
+        ErrorHandler h(p);
+
+        ErrorInfo e;
+        e.errorType = ErrorType::RateLimitError;
+
+        HttpResponse resp = makeResp(429, R"({"error":{"message":"rate limited"}})");
+        resp.multiHeaders.add("Retry-After", "2");
+        resp.headers = resp.multiHeaders.toFirstValueMap();
+
+        const auto delayMs = h.getRetryDelayMs(e, 3, std::optional<HttpResponse>{resp});
+        CHECK_EQ(delayMs, 2000U);
     }});
 
     return mini_test::run(tests);

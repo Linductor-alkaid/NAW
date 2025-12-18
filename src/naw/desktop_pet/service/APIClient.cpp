@@ -48,6 +48,27 @@ static std::string joinUrl(const std::string& base, const std::string& path) {
     return base + path;
 }
 
+static void upsertContextField(ErrorInfo& info, const std::string& key, const std::string& value) {
+    if (value.empty()) return;
+    if (!info.context.has_value()) info.context = std::map<std::string, std::string>{};
+    (*info.context)[key] = value;
+}
+
+static void enrichErrorInfoContext(
+    ErrorInfo& info,
+    const std::string& model,
+    const std::string& endpoint,
+    const std::optional<HttpRequest>& req = std::nullopt) {
+    // 注意：不写入任何敏感信息（例如 api_key、Authorization header）
+    upsertContextField(info, "model", model);
+    upsertContextField(info, "endpoint", endpoint);
+    if (req.has_value()) {
+        upsertContextField(info, "url", req->url);
+        upsertContextField(info, "method", std::to_string(static_cast<int>(req->method)));
+    }
+    // attempt/requestId：若未来可得再补齐；这里不强行填充
+}
+
 APIClient::ApiClientError::ApiClientError(const ErrorInfo& info)
     : std::runtime_error(info.toString())
     , m_info(info)
@@ -89,10 +110,23 @@ types::ChatResponse APIClient::chat(const types::ChatRequest& req) {
     HttpClient client(m_baseUrl);
     configureHttpClient(client, m_apiKey, m_timeoutMs);
 
-    const auto j = req.toJson();
-    const auto resp = client.postJson("/chat/completions", j);
+    const std::string endpoint = "/chat/completions";
+
+    HttpRequest hreq;
+    hreq.method = HttpMethod::POST;
+    hreq.url = joinUrl(m_baseUrl, endpoint);
+    hreq.body = req.toJson().dump();
+    hreq.timeoutMs = m_timeoutMs;
+    hreq.followRedirects = true;
+    // 明确设置 headers，确保 ErrorHandler 上下文可关联请求（且不包含敏感信息）
+    if (!m_apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + m_apiKey;
+    hreq.headers["Content-Type"] = "application/json";
+    hreq.headers["Accept"] = "application/json";
+
+    const auto resp = client.execute(hreq);
     if (!resp.isSuccess()) {
-        const auto info = ErrorHandler::fromHttpResponse(resp);
+        auto info = ErrorHandler::fromHttpResponse(resp, std::optional<HttpRequest>{hreq});
+        enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
         throw ApiClientError(info);
     }
 
@@ -105,6 +139,7 @@ types::ChatResponse APIClient::chat(const types::ChatRequest& req) {
         info.details = nlohmann::json{
             {"body_snippet", resp.body.substr(0, 1024)},
         };
+        enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
         throw ApiClientError(info);
     }
 
@@ -115,6 +150,7 @@ types::ChatResponse APIClient::chat(const types::ChatRequest& req) {
         info.errorCode = resp.statusCode;
         info.message = "Failed to parse ChatResponse";
         info.details = *parsed;
+        enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
         throw ApiClientError(info);
     }
     return *r;
@@ -380,7 +416,8 @@ void APIClient::chatStream(const types::ChatRequest& req, Callbacks cb) {
 
     HttpRequest hreq;
     hreq.method = HttpMethod::POST;
-    hreq.url = joinUrl(m_baseUrl, "/chat/completions");
+    const std::string endpoint = "/chat/completions";
+    hreq.url = joinUrl(m_baseUrl, endpoint);
     hreq.body = r.toJson().dump();
     hreq.timeoutMs = m_timeoutMs;
     hreq.followRedirects = true;
@@ -416,7 +453,8 @@ void APIClient::chatStream(const types::ChatRequest& req, Callbacks cb) {
 
     const auto resp = client.executeStream(hreq);
     if (!resp.isSuccess()) {
-        const auto info = ErrorHandler::fromHttpResponse(resp, std::optional<HttpRequest>{hreq});
+        auto info = ErrorHandler::fromHttpResponse(resp, std::optional<HttpRequest>{hreq});
+        enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
         agg.onError(info);
         throw ApiClientError(info);
     }
