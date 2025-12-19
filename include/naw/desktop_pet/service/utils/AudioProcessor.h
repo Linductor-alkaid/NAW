@@ -206,6 +206,13 @@ public:
      */
     bool removeVadFile(const std::string& path);
 
+    // *** 回声抑制函数 - 公开接口（供内部回调使用）***
+    /**
+     * @brief 记录输出音频到缓冲区（用于回声检测）
+     * @note 此函数为 public，供匿名命名空间的 streamRead 回调使用
+     */
+    void recordOutputAudio(const void* pcm, std::size_t bytes, const AudioStreamConfig& config);
+
 private:
     struct SoundHandle {
         void* sound{nullptr};   // 实际类型为 ma_sound*
@@ -271,6 +278,20 @@ private:
     std::vector<VADFileRecord> vadCapturedFiles_;          // 记录所有生成的 VAD 文件及写入状态
     std::mutex vadFilesMutex_;                             // 保护 vadCapturedFiles_
 
+    // *** 回声抑制 - 新增 ***
+    struct OutputAudioBuffer {
+        std::vector<std::uint8_t> data;      // 环形缓冲区数据
+        std::size_t writePos{0};              // 写入位置
+        std::size_t sizeBytes{0};             // 当前数据大小
+        std::size_t capacityBytes{0};         // 容量
+        mutable std::mutex mutex;             // 保护缓冲区（mutable 以支持 const 方法）
+        AudioStreamConfig config{};           // 输出音频配置
+    };
+    OutputAudioBuffer outputBuffer_;          // 输出音频缓冲区
+    std::atomic<bool> isPlaying_{false};      // 是否有音频正在播放
+    float correlationThreshold_{0.7f};        // 相关性阈值（可配置）
+    std::uint32_t echoDelayMs_{100};          // 回声延迟估计（毫秒）
+
     // 内部工具
     ma_format toMiniaudioFormat(AudioFormat fmt) const;
     std::size_t frameSizeBytes(const AudioStreamConfig& cfg) const;
@@ -286,6 +307,21 @@ private:
                      std::vector<std::uint8_t>& pcm,
                      float thresholdDb) const;
     void resetRingAfterCapture(std::size_t bytesPerFrame, double prerollSeconds);
+
+    // *** 回声抑制函数 - 新增 ***
+    /**
+     * @brief 计算输入音频与输出音频的相关性
+     * @return 相关性系数 [-1, 1]，接近1表示高度相似（可能是回声）
+     */
+    float computeCorrelation(const void* inputPcm, std::uint32_t inputFrames) const;
+    /**
+     * @brief 初始化输出音频缓冲区
+     */
+    void ensureOutputBufferCapacity(const AudioStreamConfig& config);
+    /**
+     * @brief 淡出并停止所有播放
+     */
+    void fadeOutAndStopAll();
 
     // *** VAD 文件管理函数 - 新增 ***
     /**

@@ -1,6 +1,8 @@
 #include "naw/desktop_pet/service/utils/AudioProcessor.h"
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <filesystem>
 #include <cstring>
@@ -24,6 +26,7 @@ struct StreamSource {
     naw::desktop_pet::service::utils::AudioStreamConfig stream{};
     std::atomic<bool> finished{false};
     std::size_t bytesPerFrame{0};
+    naw::desktop_pet::service::utils::AudioProcessor* processor{nullptr}; // 用于记录输出音频
 };
 
 static StreamSource* getStreamSource(ma_data_source* ds) {
@@ -56,6 +59,10 @@ static ma_result streamRead(ma_data_source* pDataSource, void* pFramesOut, ma_ui
             }
             // 缓冲暂时为空：输出静音以平滑播放
             std::memset(dst + totalRead * bytesPerFrame, 0, static_cast<std::size_t>(requested) * bytesPerFrame);
+            // 记录静音输出
+            if (src->processor != nullptr) {
+                src->processor->recordOutputAudio(dst + totalRead * bytesPerFrame, static_cast<std::size_t>(requested) * bytesPerFrame, src->stream);
+            }
             totalRead += requested;
             break;
         }
@@ -67,6 +74,10 @@ static ma_result streamRead(ma_data_source* pDataSource, void* pFramesOut, ma_ui
             break;
         }
         std::memcpy(dst + totalRead * bytesPerFrame, pRead, static_cast<std::size_t>(acquire) * bytesPerFrame);
+        // 记录输出音频用于回声检测
+        if (src->processor != nullptr) {
+            src->processor->recordOutputAudio(pRead, static_cast<std::size_t>(acquire) * bytesPerFrame, src->stream);
+        }
         ma_pcm_rb_commit_read(&src->rb, acquire);
         totalRead += acquire;
 
@@ -111,7 +122,7 @@ static ma_data_source_vtable g_streamVTable{
     nullptr             // onGetLength
 };
 
-static StreamSource* createStreamSource(const naw::desktop_pet::service::utils::AudioStreamConfig& stream, std::size_t bufferFrames) {
+static StreamSource* createStreamSource(const naw::desktop_pet::service::utils::AudioStreamConfig& stream, std::size_t bufferFrames, naw::desktop_pet::service::utils::AudioProcessor* processor = nullptr) {
     if (stream.sampleRate == 0 || stream.channels == 0) {
         return nullptr;
     }
@@ -119,6 +130,7 @@ static StreamSource* createStreamSource(const naw::desktop_pet::service::utils::
     auto* src = new StreamSource();
     src->stream = stream;
     src->bytesPerFrame = ma_get_bytes_per_sample(stream.format == naw::desktop_pet::service::utils::AudioFormat::S16 ? ma_format_s16 : ma_format_f32) * stream.channels;
+    src->processor = processor;
 
     ma_data_source_config dsCfg = ma_data_source_config_init();
     dsCfg.vtable = &g_streamVTable;
@@ -421,6 +433,16 @@ void AudioProcessor::shutdown() {
         captureContext_ = nullptr;
     }
 
+    // *** 清理输出音频缓冲区 ***
+    {
+        std::lock_guard<std::mutex> lock(outputBuffer_.mutex);
+        outputBuffer_.data.clear();
+        outputBuffer_.capacityBytes = 0;
+        outputBuffer_.sizeBytes = 0;
+        outputBuffer_.writePos = 0;
+    }
+    
+    isPlaying_.store(false);
     engine_ = nullptr;
     initialized_ = false;
 }
@@ -459,6 +481,8 @@ std::optional<std::uint32_t> AudioProcessor::playFile(const std::string& path, c
     const auto id = nextSoundId_.fetch_add(1);
     addSoundHandle(id, sound);
     ma_sound_start(sound);
+    isPlaying_.store(true);
+    ensureOutputBufferCapacity(playbackConfig_);
     return id;
 }
 
@@ -497,6 +521,8 @@ std::optional<std::uint32_t> AudioProcessor::playMemory(const void* data, std::s
         }
     }
     ma_sound_start(sound);
+    isPlaying_.store(true);
+    ensureOutputBufferCapacity(playbackConfig_);
     return id;
 }
 
@@ -518,7 +544,7 @@ std::optional<std::uint32_t> AudioProcessor::startStream(const AudioStreamConfig
         return std::nullopt;
     }
 
-    auto* src = createStreamSource(cfg, bufferFrames);
+    auto* src = createStreamSource(cfg, bufferFrames, this);
     if (src == nullptr) {
         return std::nullopt;
     }
@@ -543,6 +569,8 @@ std::optional<std::uint32_t> AudioProcessor::startStream(const AudioStreamConfig
         }
     }
     ma_sound_start(sound);
+    isPlaying_.store(true);
+    ensureOutputBufferCapacity(cfg);
     return id;
 }
 
@@ -650,6 +678,14 @@ bool AudioProcessor::stop(std::uint32_t soundId) {
     if (handle->streamSource != nullptr) {
         destroyStreamSource(reinterpret_cast<StreamSource*>(handle->streamSource));
     }
+    
+    // 检查是否还有音频在播放
+    {
+        std::lock_guard<std::mutex> lock(soundMutex_);
+        if (sounds_.empty()) {
+            isPlaying_.store(false);
+        }
+    }
     return true;
 }
 
@@ -685,6 +721,8 @@ void AudioProcessor::stopAll() {
     for (auto id : ids) {
         stop(id);
     }
+    
+    isPlaying_.store(false);
 }
 
 void AudioProcessor::dataCallbackCapture(void* pUserData, const void* pInput, std::uint32_t frameCount) {
@@ -706,6 +744,23 @@ void AudioProcessor::onCaptureFrames(const void* pInput, std::uint32_t frameCoun
         // VAD 模式：写环形缓冲，做能量检测和状态机
         const float db = computeDb(pInput, frameCount);
         lastDb_ = db;
+        
+        // 如果正在播放，先进行回声检测
+        if (isPlaying_.load()) {
+            float correlation = computeCorrelation(pInput, frameCount);
+            
+            if (correlation >= correlationThreshold_) {
+                // 高相关性：认为是回声，不触发VAD
+                pushRing(pInput, bytesToCopy);
+                return;  // 跳过VAD检测
+            } else if (db >= vadConfig_.startThresholdDb) {
+                // 低相关性但能量高：外部音频，停止播放
+                fadeOutAndStopAll();
+                isPlaying_.store(false);
+                // 继续执行VAD逻辑
+            }
+        }
+        
         pushRing(pInput, bytesToCopy);
 
         // 状态机
@@ -1352,6 +1407,208 @@ bool AudioProcessor::removeVadFile(const std::string& path) {
     } catch (const std::exception& e) {
         std::cerr << "[VAD] Failed to delete " << path << ": " << e.what() << "\n";
         return false;
+    }
+}
+
+// *** 回声抑制实现 ***
+
+void AudioProcessor::ensureOutputBufferCapacity(const AudioStreamConfig& config) {
+    std::lock_guard<std::mutex> lock(outputBuffer_.mutex);
+    
+    // 计算需要的容量：保留 echoDelayMs_ + 一些余量（总共约500ms）
+    const std::uint32_t sampleRate = config.sampleRate != 0 ? config.sampleRate : 48000;
+    const std::size_t bytesPerFrame = frameSizeBytes(config);
+    const std::size_t targetBytes = static_cast<std::size_t>((500.0 / 1000.0) * sampleRate * bytesPerFrame);
+    
+    // 如果格式不匹配或容量不足，重新分配
+    if (outputBuffer_.capacityBytes < targetBytes || 
+        outputBuffer_.config.sampleRate != config.sampleRate ||
+        outputBuffer_.config.channels != config.channels ||
+        outputBuffer_.config.format != config.format) {
+        outputBuffer_.data.resize(targetBytes, 0);
+        outputBuffer_.capacityBytes = targetBytes;
+        outputBuffer_.writePos = 0;
+        outputBuffer_.sizeBytes = 0;
+        outputBuffer_.config = config;
+    }
+}
+
+void AudioProcessor::recordOutputAudio(const void* pcm, std::size_t bytes, const AudioStreamConfig& config) {
+    if (pcm == nullptr || bytes == 0) {
+        return;
+    }
+    
+    // 确保缓冲区容量足够（在锁外进行，避免死锁）
+    if (outputBuffer_.capacityBytes == 0 || outputBuffer_.config.sampleRate != config.sampleRate ||
+        outputBuffer_.config.channels != config.channels || outputBuffer_.config.format != config.format) {
+        ensureOutputBufferCapacity(config);
+    }
+    
+    std::lock_guard<std::mutex> lock(outputBuffer_.mutex);
+    
+    if (outputBuffer_.capacityBytes == 0) {
+        return;
+    }
+    
+    const auto* src = static_cast<const std::uint8_t*>(pcm);
+    std::size_t remaining = bytes;
+    
+    while (remaining > 0) {
+        const std::size_t space = outputBuffer_.capacityBytes - outputBuffer_.writePos;
+        const std::size_t chunk = std::min(space, remaining);
+        
+        std::copy(src, src + chunk, outputBuffer_.data.begin() + outputBuffer_.writePos);
+        outputBuffer_.writePos = (outputBuffer_.writePos + chunk) % outputBuffer_.capacityBytes;
+        src += chunk;
+        remaining -= chunk;
+        
+        outputBuffer_.sizeBytes = std::min(outputBuffer_.sizeBytes + chunk, outputBuffer_.capacityBytes);
+    }
+}
+
+float AudioProcessor::computeCorrelation(const void* inputPcm, std::uint32_t inputFrames) const {
+    if (inputPcm == nullptr || inputFrames == 0) {
+        return 0.0f;
+    }
+    
+    std::lock_guard<std::mutex> lock(outputBuffer_.mutex);
+    
+    if (outputBuffer_.sizeBytes == 0 || outputBuffer_.capacityBytes == 0) {
+        return 0.0f; // 没有输出音频可比较
+    }
+    
+    // 检查格式是否匹配（简化：只检查格式和声道数，采样率差异通过延迟补偿）
+    const auto inputFmt = captureOptions_.stream.format;
+    const auto inputChannels = captureOptions_.stream.channels;
+    const auto outputFmt = outputBuffer_.config.format;
+    const auto outputChannels = outputBuffer_.config.channels;
+    
+    // 如果格式不匹配，返回低相关性
+    if (inputFmt != outputFmt || inputChannels != outputChannels) {
+        return 0.0f;
+    }
+    
+    // 计算延迟帧数（回声延迟）
+    const std::uint32_t sampleRate = captureOptions_.stream.sampleRate != 0 ? captureOptions_.stream.sampleRate : 48000;
+    const std::uint32_t delayFrames = static_cast<std::uint32_t>((echoDelayMs_ / 1000.0) * sampleRate);
+    
+    const std::size_t bytesPerFrame = frameSizeBytes(captureOptions_.stream);
+    const std::size_t inputBytes = static_cast<std::size_t>(inputFrames) * bytesPerFrame;
+    
+    // 确保有足够的数据进行比较（需要至少 inputBytes + 延迟的数据）
+    const std::size_t requiredBytes = inputBytes + delayFrames * bytesPerFrame;
+    if (outputBuffer_.sizeBytes < requiredBytes) {
+        return 0.0f;
+    }
+    
+    // 从输出缓冲区中提取延迟后的数据
+    const std::size_t cap = outputBuffer_.capacityBytes;
+    const std::size_t startPos = (outputBuffer_.writePos + cap - outputBuffer_.sizeBytes + delayFrames * bytesPerFrame) % cap;
+    
+    // 计算归一化互相关（NCC）
+    double sumX = 0.0, sumY = 0.0, sumXY = 0.0, sumX2 = 0.0, sumY2 = 0.0;
+    std::size_t samples = 0;
+    
+    const std::size_t totalSamples = inputFrames * inputChannels;
+    const std::size_t bytesPerSample = bytesPerSampleFor(inputFmt);
+    
+    // 为了性能，只比较第一个声道
+    for (std::size_t i = 0; i < totalSamples; i += inputChannels) {
+        float x = 0.0f, y = 0.0f;
+        
+        // 读取输入样本（第一个声道）
+        if (inputFmt == AudioFormat::S16) {
+            const auto* p = static_cast<const std::int16_t*>(inputPcm);
+            x = static_cast<float>(p[i]) / 32768.0f;
+        } else {
+            const auto* p = static_cast<const float*>(inputPcm);
+            x = p[i];
+        }
+        
+        // 读取输出样本（第一个声道）
+        const std::size_t outputSampleIdx = i; // 样本索引（不是字节索引）
+        const std::size_t outputByteIdx = (startPos + outputSampleIdx * bytesPerSample) % cap;
+        
+        // 检查是否跨越边界
+        if (outputByteIdx + bytesPerSample <= cap) {
+            if (inputFmt == AudioFormat::S16) {
+                const auto* p = reinterpret_cast<const std::int16_t*>(outputBuffer_.data.data() + outputByteIdx);
+                y = static_cast<float>(p[0]) / 32768.0f;
+            } else {
+                const auto* p = reinterpret_cast<const float*>(outputBuffer_.data.data() + outputByteIdx);
+                y = p[0];
+            }
+        } else {
+            // 处理环形缓冲的边界情况：需要分两次读取
+            // 简化处理：跳过边界样本
+            continue;
+        }
+        
+        sumX += x;
+        sumY += y;
+        sumXY += x * y;
+        sumX2 += x * x;
+        sumY2 += y * y;
+        samples++;
+    }
+    
+    if (samples == 0 || samples < 10) { // 至少需要10个样本
+        return 0.0f;
+    }
+    
+    // 计算 Pearson 相关系数
+    const double meanX = sumX / samples;
+    const double meanY = sumY / samples;
+    const double covXY = (sumXY / samples) - (meanX * meanY);
+    const double varX = (sumX2 / samples) - (meanX * meanX);
+    const double varY = (sumY2 / samples) - (meanY * meanY);
+    
+    if (varX <= 1e-9 || varY <= 1e-9) {
+        return 0.0f;
+    }
+    
+    const double correlation = covXY / std::sqrt(varX * varY);
+    return static_cast<float>(std::max(-1.0, std::min(1.0, correlation)));
+}
+
+void AudioProcessor::fadeOutAndStopAll() {
+    std::vector<std::uint32_t> ids;
+    {
+        std::lock_guard<std::mutex> lock(soundMutex_);
+        ids.reserve(sounds_.size());
+        for (auto& kv : sounds_) {
+            ids.push_back(kv.first);
+        }
+    }
+    
+    if (ids.empty()) {
+        isPlaying_.store(false);
+        return;
+    }
+    
+    // 对每个音频进行淡出
+    std::atomic<int> remaining{static_cast<int>(ids.size())};
+    for (auto id : ids) {
+        std::thread([this, id, &remaining]() {
+            const float fadeDuration = 0.2f; // 200ms淡出
+            const int steps = 20;
+            const float stepVolume = 1.0f / steps;
+            
+            for (int i = 0; i < steps; ++i) {
+                float volume = 1.0f - (i * stepVolume);
+                setVolume(id, volume);
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(
+                        static_cast<int>(fadeDuration * 1000 / steps)
+                    )
+                );
+            }
+            stop(id);
+            
+            if (--remaining == 0) {
+                isPlaying_.store(false);
+            }
+        }).detach();
     }
 }
 

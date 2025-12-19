@@ -583,15 +583,47 @@ static bool isProbablyJson(std::string_view chunk) {
     if (i >= chunk.size()) return false;
     const char first = chunk[i];
     if (first != '{' && first != '[') return false;
-    const size_t scan = std::min<size_t>(chunk.size() - i, 32);
+    // 4. 检查前128字节的可打印字符比例（更长的采样窗口）
+    const size_t scan = std::min<size_t>(chunk.size() - i, 128);
+    if (scan < 32) return false; // 至少需要32字节来确认
+    
     size_t printable = 0;
+    size_t nullBytes = 0; // 统计null字节（PCM数据中常见）
+    
     for (size_t k = 0; k < scan; ++k) {
         unsigned char c = static_cast<unsigned char>(chunk[i + k]);
-        if (c == '\r' || c == '\n' || c == '\t') { printable++; continue; }
-        if (c >= 32 && c <= 126) { printable++; continue; }
+        if (c == 0) {
+            nullBytes++;
+            continue; // null字节在JSON中极少见，但在PCM中常见
+        }
+        if (c == '\r' || c == '\n' || c == '\t') {
+            printable++;
+            continue;
+        }
+        if (c >= 32 && c <= 126) {
+            printable++;
+            continue;
+        }
     }
-    // 80% 以上可打印才认为是 JSON 文本
-    return printable * 10 >= scan * 8;
+    
+    // 5. 如果null字节过多，很可能是二进制数据
+    if (nullBytes > scan / 4) return false; // 超过25%的null字节，很可能是PCM
+    
+    // 6. 可打印字符必须超过85%（更严格）
+    if (printable * 100 < scan * 85) return false;
+    
+    // 7. 检查是否包含JSON常见关键字（额外验证）
+    std::string_view sample(chunk.data() + i, std::min<size_t>(scan, 256));
+    const bool hasJsonKeywords = 
+        sample.find("error") != std::string::npos ||
+        sample.find("message") != std::string::npos ||
+        sample.find("code") != std::string::npos ||
+        sample.find("\"") != std::string::npos; // 至少有一个引号
+    
+    // 8. 如果可打印字符比例高但没有JSON特征，可能是其他文本格式，保守处理
+    if (!hasJsonKeywords && printable * 100 < scan * 95) return false;
+    
+    return true;
 }
 
 static bool containsCaseInsensitive(std::string_view haystack, std::string_view needle) {
@@ -701,18 +733,41 @@ static std::optional<std::uint32_t> ttsPcmStreamToPlayback(const TtsConfig& tts,
     std::string errorBody;
     std::vector<std::uint8_t> pending;
     pending.reserve(4096);
-    bool sawJson = false;
+    bool sawPossibleJson = false;
+    std::size_t audioBytesWritten = 0; // 已写入的音频字节数
+    const std::size_t kMinAudioBytes = 1024; // 至少写入1KB音频后才允许判断为错误
 
     req.streamHandler = [&](std::string_view chunk) {
         if (chunk.empty()) return;
-        if (!sawJson && isProbablyJson(chunk)) {
-            sawJson = true;
-        }
-        if (sawJson) {
-            // 服务器可能在错误时返回 JSON
-            if (errorBody.size() < 64 * 1024) errorBody.append(chunk.data(), chunk.size());
+        // 改进的错误检测策略：
+        // 1. 只有在还没有写入足够音频数据时，才检测JSON错误
+        // 2. 即使检测到可能的JSON，也继续处理，直到流结束并检查状态码
+        // 3. 如果已经写入了音频数据，说明之前的数据是有效的，不应该因为后续数据而停止
+        
+        if (!sawPossibleJson && audioBytesWritten < kMinAudioBytes) {
+            // 只在初始阶段检测JSON，避免误判已写入的音频数据
+            if (isProbablyJson(chunk)) {
+                sawPossibleJson = true;
+                // 收集可能的错误信息，但不立即停止处理
+                if (errorBody.size() < 64 * 1024) {
+                    errorBody.append(chunk.data(), chunk.size());
+                }
+                // 关键改进：即使检测到可能的JSON，也继续处理后续数据
+                // 因为可能是服务器先返回错误信息，然后返回音频（虽然不常见）
+                // 或者可能是误判，实际是音频数据
+                // 真正的错误判断应该在流结束后根据HTTP状态码决定
+                return; // 跳过这个chunk，但不设置全局停止标志
+            }
+        } else if (sawPossibleJson && audioBytesWritten < kMinAudioBytes) {
+            // 如果已经检测到可能的JSON，继续收集错误信息
+            if (errorBody.size() < 64 * 1024) {
+                errorBody.append(chunk.data(), chunk.size());
+            }
             return;
         }
+        
+        // 如果已经写入了足够的音频数据，即使后续看到JSON也不应该停止
+        // 因为可能是流式响应中混有元数据，或者检测误判
 
         // append PCM bytes
         pending.insert(pending.end(),
@@ -732,6 +787,7 @@ static std::optional<std::uint32_t> ttsPcmStreamToPlayback(const TtsConfig& tts,
             const size_t toWrite = (std::min)(remain, kChunk);
             if (audio.appendStreamData(*soundId, pending.data() + offset, toWrite)) {
                 offset += toWrite;
+                audioBytesWritten += toWrite; // 记录已写入的音频数据量
                 continue;
             }
             break;
@@ -743,15 +799,13 @@ static std::optional<std::uint32_t> ttsPcmStreamToPlayback(const TtsConfig& tts,
     };
 
     auto resp = client.executeStream(req);
-    audio.finishStream(*soundId);
-    playbackActive.store(false, std::memory_order_release);
-    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                           std::chrono::steady_clock::now().time_since_epoch())
-                           .count();
-    ignoreUntilMs.store(nowMs + static_cast<long long>(tailIgnoreMs), std::memory_order_release);
-
+    
+    // 改进的错误处理：只有在HTTP状态码明确表示错误时，才停止播放
+    // 如果已经写入了音频数据，即使检测到可能的JSON，也不应该停止
     if (!resp.isSuccess()) {
         audio.stop(*soundId);
+        audio.finishStream(*soundId); // 确保流被正确结束
+        playbackActive.store(false, std::memory_order_release);
         if (errOut) {
             if (!errorBody.empty()) {
                 *errOut = "TTS stream failed: status=" + std::to_string(resp.statusCode) + " body=" + errorBody;
@@ -761,6 +815,30 @@ static std::optional<std::uint32_t> ttsPcmStreamToPlayback(const TtsConfig& tts,
         }
         return std::nullopt;
     }
+    
+    // 即使HTTP状态码成功，如果检测到JSON且没有写入音频数据，也可能是错误
+    // 但这种情况应该很少见，因为服务器通常会在错误时返回非2xx状态码
+    if (sawPossibleJson && audioBytesWritten < kMinAudioBytes && !errorBody.empty()) {
+        // 警告：检测到可能的错误响应，但HTTP状态码是成功的
+        // 这种情况可能是服务器实现问题，或者检测误判
+        // 为了安全，如果确实没有写入音频数据，则认为是错误
+        audio.stop(*soundId);
+        audio.finishStream(*soundId);
+        playbackActive.store(false, std::memory_order_release);
+        if (errOut) {
+            *errOut = "TTS stream suspicious: status=" + std::to_string(resp.statusCode) + 
+                     " but received JSON-like data with no audio. body=" + errorBody.substr(0, 512);
+        }
+        return std::nullopt;
+    }
+    
+    // 正常完成：标记流结束，让音频播放完缓冲中的数据
+    audio.finishStream(*soundId);
+    playbackActive.store(false, std::memory_order_release);
+    const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                           std::chrono::steady_clock::now().time_since_epoch())
+                           .count();
+    ignoreUntilMs.store(nowMs + static_cast<long long>(tailIgnoreMs), std::memory_order_release);
 
     return soundId;
 }
