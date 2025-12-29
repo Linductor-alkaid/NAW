@@ -258,42 +258,42 @@ src/naw/desktop_pet/service/
 ### 4.2.3 详细任务清单
 
 #### 4.2.3.1 流式响应处理
-- [ ] **SSE数据流解析**
-  - [ ] 复用 Phase2 中 `APIClient` 的 SSE 解析逻辑（或提取为独立组件）
-  - [ ] 实现 `parseSSEChunk()` 方法
-    - [ ] 处理 `\n\n` 分隔的事件
-    - [ ] 处理多行 `data:` 拼接
-    - [ ] 处理 `data: [DONE]` 终止标记
-    - [ ] 处理断行/粘包（chunk 可能任意切割）
-  - [ ] 输出：每个 event 的 JSON payload（string）
+- [x] **SSE数据流解析**
+  - [x] 复用 Phase2 中 `APIClient` 的 SSE 解析逻辑（或提取为独立组件）
+  - [x] 实现 `parseSSEChunk()` 方法（通过 `SseDecoder` 类实现）
+    - [x] 处理 `\n\n` 分隔的事件
+    - [x] 处理多行 `data:` 拼接
+    - [x] 处理 `data: [DONE]` 终止标记
+    - [x] 处理断行/粘包（chunk 可能任意切割）
+  - [x] 输出：每个 event 的 JSON payload（string）
 
-- [ ] **增量内容提取**
-  - [ ] 实现 `extractTextDelta()` 方法
-    - [ ] 从 SSE event JSON 中提取 `choices[0].delta.content`
-    - [ ] 返回增量文本内容（`std::string_view` 或 `std::string`）
-  - [ ] 实现 `extractToolCallDelta()` 方法
-    - [ ] 从 SSE event JSON 中提取 `choices[0].delta.tool_calls`
-    - [ ] 返回增量工具调用数据（`ToolCallDelta` 结构）
-  - [ ] 实现 `extractFinishReason()` 方法
-    - [ ] 从 SSE event JSON 中提取 `choices[0].finish_reason`
-    - [ ] 返回完成原因（`stop`、`tool_calls`、`length` 等）
+- [x] **增量内容提取**
+  - [x] 实现 `extractTextDelta()` 方法（通过 `ChatStreamAggregator::onChunkJson()` 实现）
+    - [x] 从 SSE event JSON 中提取 `choices[0].delta.content`
+    - [x] 返回增量文本内容（`std::string_view` 或 `std::string`）
+  - [x] 实现 `extractToolCallDelta()` 方法（通过 `ChatStreamAggregator::onChunkJson()` 实现）
+    - [x] 从 SSE event JSON 中提取 `choices[0].delta.tool_calls`
+    - [x] 返回增量工具调用数据（`ToolCallDelta` 结构）
+  - [x] 实现 `extractFinishReason()` 方法（通过 `ChatStreamAggregator::onChunkJson()` 实现）
+    - [x] 从 SSE event JSON 中提取 `choices[0].finish_reason`
+    - [x] 返回完成原因（`stop`、`tool_calls`、`length` 等）
 
-- [ ] **流式回调管理**
-  - [ ] 定义流式回调接口（`StreamCallbacks`）
-    - [ ] `onTextDelta(std::string_view delta)` - 文本增量回调
-    - [ ] `onToolCallDelta(const ToolCallDelta& delta)` - 工具调用增量回调
-    - [ ] `onComplete(const ChatResponse& response)` - 完成回调
-    - [ ] `onError(const ErrorInfo& error)` - 错误回调
-  - [ ] 实现 `handleStreamResponse()` 方法
-    - [ ] 接收 SSE 数据流
-    - [ ] 解析每个 chunk
-    - [ ] 聚合增量内容
-    - [ ] 调用相应的回调函数
-    - [ ] 处理完成和错误情况
-  - [ ] 实现流式响应聚合器
-    - [ ] 累积文本内容（`m_accumulatedContent`）
-    - [ ] 累积工具调用（按 index/id 聚合）
-    - [ ] 最终构建完整的 `ChatResponse` 对象
+- [x] **流式回调管理**
+  - [x] 定义流式回调接口（`StreamCallbacks`）
+    - [x] `onTextDelta(std::string_view delta)` - 文本增量回调
+    - [x] `onToolCallDelta(const ToolCallDelta& delta)` - 工具调用增量回调
+    - [x] `onComplete(const ChatResponse& response)` - 完成回调
+    - [x] `onError(const ErrorInfo& error)` - 错误回调
+  - [x] 实现 `handleStreamResponse()` 方法
+    - [x] 接收 SSE 数据流
+    - [x] 解析每个 chunk
+    - [x] 聚合增量内容
+    - [x] 调用相应的回调函数
+    - [x] 处理完成和错误情况
+  - [x] 实现流式响应聚合器（`ChatStreamAggregator` 类）
+    - [x] 累积文本内容（`m_accumulatedContent`）
+    - [x] 累积工具调用（按 index/id 聚合）
+    - [x] 最终构建完整的 `ChatResponse` 对象
 
 **验收标准**：
 - 单测验证：SSE 数据流解析正确（处理各种边界情况）。
@@ -301,38 +301,38 @@ src/naw/desktop_pet/service/
 - 单测验证：流式回调按顺序正确调用。
 
 #### 4.2.3.2 响应验证
-- [ ] **JSON格式验证**
-  - [ ] 实现 `validateJsonFormat()` 方法
-    - [ ] 检查响应是否为有效 JSON
-    - [ ] 使用 `nlohmann::json::parse()` 解析
-    - [ ] 捕获 JSON 解析异常
-    - [ ] 返回验证结果（成功/失败 + 错误信息）
-  - [ ] 实现 `validateResponseStructure()` 方法
-    - [ ] 检查必需字段是否存在（`choices`、`usage` 等）
-    - [ ] 检查字段类型是否正确
-    - [ ] 返回验证结果
+- [x] **JSON格式验证**
+  - [x] 实现 `validateJsonFormat()` 方法
+    - [x] 检查响应是否为有效 JSON
+    - [x] 使用 `nlohmann::json::parse()` 解析
+    - [x] 捕获 JSON 解析异常
+    - [x] 返回验证结果（成功/失败 + 错误信息）
+  - [x] 实现 `validateResponseStructure()` 方法
+    - [x] 检查必需字段是否存在（`choices`、`usage` 等）
+    - [x] 检查字段类型是否正确
+    - [x] 返回验证结果
 
-- [ ] **必需字段检查**
-  - [ ] 定义响应字段验证规则
-    - [ ] `choices` 数组必须存在且非空
-    - [ ] `choices[0].message` 必须存在
-    - [ ] `usage` 对象应该存在（可选，但建议有）
-  - [ ] 实现 `checkRequiredFields()` 方法
-    - [ ] 检查所有必需字段
-    - [ ] 返回缺失字段列表（如果有）
-  - [ ] 实现字段类型验证
-    - [ ] `choices` 必须是数组
-    - [ ] `usage` 必须是对象
-    - [ ] `prompt_tokens`、`completion_tokens`、`total_tokens` 必须是数字
+- [x] **必需字段检查**
+  - [x] 定义响应字段验证规则
+    - [x] `choices` 数组必须存在且非空
+    - [x] `choices[0].message` 必须存在
+    - [x] `usage` 对象应该存在（可选，但建议有）
+  - [x] 实现 `checkRequiredFields()` 方法
+    - [x] 检查所有必需字段
+    - [x] 返回缺失字段列表（如果有）
+  - [x] 实现字段类型验证
+    - [x] `choices` 必须是数组
+    - [x] `usage` 必须是对象
+    - [x] `prompt_tokens`、`completion_tokens`、`total_tokens` 必须是数字
 
-- [ ] **响应内容验证**
-  - [ ] 实现 `validateResponseContent()` 方法
-    - [ ] 检查响应内容是否为空（对于非工具调用响应）
-    - [ ] 检查工具调用参数是否有效（JSON格式）
-    - [ ] 检查 finish_reason 是否有效
-  - [ ] 实现响应完整性检查
-    - [ ] 流式响应是否完整（收到 `[DONE]` 标记）
-    - [ ] 工具调用是否完整（所有 tool_calls 都有完整参数）
+- [x] **响应内容验证**
+  - [x] 实现 `validateResponseContent()` 方法
+    - [x] 检查响应内容是否为空（对于非工具调用响应）
+    - [x] 检查工具调用参数是否有效（JSON格式）
+    - [x] 检查 finish_reason 是否有效
+  - [x] 实现响应完整性检查
+    - [x] 流式响应是否完整（收到 `[DONE]` 标记）
+    - [x] 工具调用是否完整（所有 tool_calls 都有完整参数）
 
 **验收标准**：
 - 单测验证：JSON 格式验证正确（有效/无效 JSON 都能正确识别）。
@@ -340,35 +340,35 @@ src/naw/desktop_pet/service/
 - 单测验证：响应内容验证正确（空内容、无效工具调用等）。
 
 #### 4.2.3.3 响应缓存集成
-- [ ] **缓存查询集成**
-  - [ ] 在 `ResponseHandler` 中持有 `CacheManager` 的引用
-  - [ ] 实现 `checkCache()` 方法
-    - [ ] 根据请求生成缓存键（使用 `CacheManager::generateKey()`）
-    - [ ] 查询缓存（使用 `CacheManager::get()`）
-    - [ ] 如果命中，返回缓存的响应
-    - [ ] 如果未命中，返回 `std::nullopt`
-  - [ ] 在响应处理流程中集成缓存查询
-    - [ ] 在处理请求前先查询缓存
-    - [ ] 命中缓存时直接返回，跳过 API 调用
+- [x] **缓存查询集成**
+  - [x] 在 `ResponseHandler` 中持有 `CacheManager` 的引用
+  - [x] 实现 `checkCache()` 方法
+    - [x] 根据请求生成缓存键（使用 `CacheManager::generateKey()`）
+    - [x] 查询缓存（使用 `CacheManager::get()`）
+    - [x] 如果命中，返回缓存的响应
+    - [x] 如果未命中，返回 `std::nullopt`
+  - [x] 在响应处理流程中集成缓存查询
+    - [x] 在处理请求前先查询缓存
+    - [x] 命中缓存时直接返回，跳过 API 调用
 
-- [ ] **缓存存储集成**
-  - [ ] 实现 `storeCache()` 方法
-    - [ ] 根据请求生成缓存键
-    - [ ] 存储响应到缓存（使用 `CacheManager::put()`）
-    - [ ] 只缓存非流式响应（流式响应不适合缓存）
-    - [ ] 只缓存成功的响应（失败响应不缓存）
-  - [ ] 在响应处理流程中集成缓存存储
-    - [ ] API 调用成功后存储响应
-    - [ ] 检查缓存配置（是否启用缓存）
+- [x] **缓存存储集成**
+  - [x] 实现 `storeCache()` 方法
+    - [x] 根据请求生成缓存键
+    - [x] 存储响应到缓存（使用 `CacheManager::put()`）
+    - [x] 只缓存非流式响应（流式响应不适合缓存）
+    - [x] 只缓存成功的响应（失败响应不缓存）
+  - [x] 在响应处理流程中集成缓存存储
+    - [x] API 调用成功后存储响应
+    - [x] 检查缓存配置（是否启用缓存）
 
-- [ ] **缓存策略配置**
-  - [ ] 从 `ConfigManager` 读取缓存配置
-    - [ ] `cache.enabled` - 是否启用缓存
-    - [ ] `cache.default_ttl_seconds` - 默认 TTL
-  - [ ] 实现缓存条件判断
-    - [ ] 只缓存确定性请求（`temperature=0` 或接近 0）
-    - [ ] 不缓存包含工具调用的请求（可选，根据配置）
-    - [ ] 不缓存流式请求
+- [x] **缓存策略配置**
+  - [x] 从 `ConfigManager` 读取缓存配置
+    - [x] `cache.enabled` - 是否启用缓存
+    - [x] `cache.default_ttl_seconds` - 默认 TTL
+  - [x] 实现缓存条件判断（`shouldCache()` 方法）
+    - [x] 只缓存确定性请求（`temperature=0` 或接近 0）
+    - [x] 不缓存包含工具调用的请求（可选，根据配置）
+    - [x] 不缓存流式请求
 
 **验收标准**：
 - 单测验证：缓存查询集成正确（命中缓存时直接返回）。
@@ -376,29 +376,32 @@ src/naw/desktop_pet/service/
 - 单测验证：缓存策略生效（符合条件的请求被缓存，不符合的不缓存）。
 
 #### 4.2.3.4 响应统计
-- [ ] **统计数据结构**
-  - [ ] 定义 `ResponseStatistics` 结构体
-    - [ ] `totalResponses`（总响应数）
-    - [ ] `successfulResponses`（成功响应数）
-    - [ ] `failedResponses`（失败响应数）
-    - [ ] `cachedResponses`（缓存命中数）
-    - [ ] `averageResponseSize`（平均响应大小，字节）
-    - [ ] `streamingResponses`（流式响应数）
-  - [ ] 使用线程安全的数据结构
+- [x] **统计数据结构**
+  - [x] 定义 `ResponseStatistics` 结构体
+    - [x] `totalResponses`（总响应数）
+    - [x] `successfulResponses`（成功响应数）
+    - [x] `failedResponses`（失败响应数）
+    - [x] `cachedResponses`（缓存命中数）
+    - [x] `totalResponseSize`（总响应大小，字节）
+    - [x] `streamingResponses`（流式响应数）
+    - [x] `getAverageResponseSize()` 方法（计算平均响应大小）
+    - [x] `getCacheHitRate()` 方法（计算缓存命中率）
+  - [x] 使用线程安全的数据结构（`std::mutex` 保护）
 
-- [ ] **统计更新**
-  - [ ] 在处理响应时更新统计
-    - [ ] `totalResponses++`
-    - [ ] 成功时 `successfulResponses++`
-    - [ ] 失败时 `failedResponses++`
-    - [ ] 缓存命中时 `cachedResponses++`
-    - [ ] 流式响应时 `streamingResponses++`
-  - [ ] 计算平均响应大小（`totalResponseSize / totalResponses`）
+- [x] **统计更新**
+  - [x] 在处理响应时更新统计
+    - [x] `totalResponses++`（在 `checkCache()` 中）
+    - [x] 成功时 `successfulResponses++`（通过 `updateStatistics()` 方法）
+    - [x] 失败时 `failedResponses++`（通过 `updateStatistics()` 方法）
+    - [x] 缓存命中时 `cachedResponses++`（在 `checkCache()` 中）
+    - [x] 流式响应时 `streamingResponses++`（通过 `updateStatistics()` 方法）
+    - [x] 响应大小统计（在 `checkCache()` 中通过 `estimateResponseSize()` 更新）
+  - [x] 计算平均响应大小（`totalResponseSize / totalResponses`）
 
-- [ ] **统计查询接口**
-  - [ ] 实现 `getStatistics()` 方法
-    - [ ] 返回完整的 `ResponseStatistics` 结构
-  - [ ] 实现缓存命中率计算（`cachedResponses / totalResponses`）
+- [x] **统计查询接口**
+  - [x] 实现 `getStatistics()` 方法
+    - [x] 返回完整的 `ResponseStatistics` 结构
+  - [x] 实现缓存命中率计算（`cachedResponses / totalResponses`，通过 `getCacheHitRate()` 方法）
 
 **验收标准**：
 - 单测验证：统计信息正确更新。
@@ -604,18 +607,36 @@ src/naw/desktop_pet/service/
 ## 4.4 单元测试与示例
 
 ### 4.4.1 单元测试
-- [ ] **RequestManager测试**
-  - [ ] 请求队列测试（入队/出队、优先级排序、队列大小限制）
-  - [ ] 并发控制测试（并发限制、并发计数、多模型独立限制）
-  - [ ] 请求调度测试（队列处理循环、请求分发、超时管理）
-  - [ ] 请求取消测试（队列中取消、处理中取消）
-  - [ ] 请求统计测试（统计更新、平均响应时间计算）
+- [x] **RequestManager测试**
+  - [x] 请求队列测试（入队/出队、优先级排序、队列大小限制）
+  - [x] 并发控制测试（并发限制、并发计数、多模型独立限制）
+  - [x] 请求调度测试（队列处理循环、请求分发、超时管理）
+  - [x] 请求取消测试（队列中取消、处理中取消）
+  - [x] 请求统计测试（统计更新、平均响应时间计算）
 
-- [ ] **ResponseHandler测试**
-  - [ ] 流式响应处理测试（SSE解析、增量提取、回调管理）
-  - [ ] 响应验证测试（JSON格式验证、必需字段检查、内容验证）
-  - [ ] 缓存集成测试（缓存查询、缓存存储、缓存策略）
-  - [ ] 响应统计测试（统计更新、缓存命中率）
+- [x] **ResponseHandler测试**
+  - [x] 流式响应处理测试（SSE解析、增量提取、回调管理）
+    - [x] 简单文本流测试
+    - [x] 完成原因测试
+    - [x] 工具调用增量测试
+    - [x] 错误处理测试
+  - [x] 响应验证测试（JSON格式验证、必需字段检查、内容验证）
+    - [x] 有效JSON验证
+    - [x] 无效JSON验证（缺失字段、空数组等）
+    - [x] 无效完成原因验证
+    - [x] 空内容验证
+    - [x] 工具调用验证
+  - [x] 缓存集成测试（缓存查询、缓存存储、缓存策略）
+    - [x] 缓存命中/未命中测试
+    - [x] 存储和检索测试
+    - [x] 流式请求不缓存测试
+    - [x] 高温度请求不缓存测试
+    - [x] 低温度请求缓存测试
+    - [x] 禁用缓存测试
+  - [x] 响应统计测试（统计更新、缓存命中率）
+    - [x] 初始状态测试
+    - [x] 缓存命中率测试
+    - [x] 平均响应大小测试
 
 - [x] **CacheManager测试**
   - [x] 缓存键生成测试（相同请求相同键、不同请求不同键）
@@ -671,18 +692,18 @@ src/naw/desktop_pet/service/
 - [x] 请求调度器实现
 - [x] 请求取消机制
 - [x] 请求统计
-- [ ] 单元测试
+- [x] 单元测试
 
 **进度**: 5/6 主要模块完成
 
 ### 4.2 响应处理器（ResponseHandler）
-- [ ] 流式响应处理
-- [ ] 响应验证
-- [ ] 响应缓存集成
-- [ ] 响应统计
-- [ ] 单元测试
+- [x] 流式响应处理
+- [x] 响应验证
+- [x] 响应缓存集成
+- [x] 响应统计
+- [x] 单元测试
 
-**进度**: 0/5 主要模块完成
+**进度**: 5/5 主要模块完成
 
 ### 4.3 缓存管理器（CacheManager）
 - [x] 缓存键生成
@@ -694,7 +715,7 @@ src/naw/desktop_pet/service/
 
 **进度**: 6/6 主要模块完成
 
-**总计**: 11/17 主要模块完成
+**总计**: 16/17 主要模块完成
 
 ---
 
@@ -729,6 +750,34 @@ Phase4 (服务管理层)
 *最后更新: 2025年12月29日*
 
 ## 更新日志
+
+### 2025年12月29日（更新2）
+- ✅ 完成 4.2 响应处理器（ResponseHandler）的实现
+  - ✅ 实现流式响应处理（SSE数据流解析、增量内容提取、流式回调管理）
+    - ✅ 复用 APIClient 中的 SseDecoder 和 ChatStreamAggregator 逻辑
+    - ✅ 实现 handleStreamResponse() 方法，支持文本和工具调用的流式处理
+  - ✅ 实现响应验证（JSON格式验证、必需字段检查、响应内容验证）
+    - ✅ 实现 validateResponse() 方法（支持 JSON 和 ChatResponse 两种输入）
+    - ✅ 实现完整的验证流程：结构验证、字段检查、内容验证
+  - ✅ 实现响应缓存集成（缓存查询、缓存存储、缓存策略）
+    - ✅ 实现 checkCache() 和 storeCache() 方法
+    - ✅ 实现 shouldCache() 缓存策略判断（温度、流式、工具调用）
+    - ✅ 从 ConfigManager 读取缓存配置
+  - ✅ 实现响应统计（统计数据结构、统计更新、统计查询接口）
+    - ✅ 实现 ResponseStatistics 结构体（包含所有统计指标）
+    - ✅ 实现统计更新逻辑（在 checkCache() 中更新）
+    - ✅ 实现 getStatistics() 和 getCacheHitRate() 查询接口
+  - ✅ 完成单元测试（22个测试用例，覆盖所有功能点）
+    - ✅ 流式响应处理测试（4个测试用例）
+    - ✅ 响应验证测试（6个测试用例）
+    - ✅ 缓存集成测试（6个测试用例）
+    - ✅ 响应统计测试（3个测试用例）
+    - ✅ JSON格式验证测试（3个测试用例）
+  - 📝 文件已创建：
+    - `include/naw/desktop_pet/service/ResponseHandler.h`
+    - `src/naw/desktop_pet/service/ResponseHandler.cpp`
+    - `src/naw/desktop_pet/service/tests/ResponseHandlerTest.cpp`
+  - 📝 已更新构建系统：`src/naw/desktop_pet/service/CMakeLists.txt`
 
 ### 2025年12月29日
 - ✅ 完成 4.1 请求管理器（RequestManager）的实现

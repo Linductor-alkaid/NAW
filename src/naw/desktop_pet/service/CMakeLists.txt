@@ -12,6 +12,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ContextManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RequestManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CacheManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ResponseHandler.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -24,6 +25,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ContextManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/RequestManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CacheManager.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ResponseHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -225,6 +227,17 @@ if(BUILD_TESTING)
     target_link_libraries(CacheManagerTest PRIVATE NAW_ServiceFoundation)
     target_include_directories(CacheManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME CacheManagerTest COMMAND CacheManagerTest)
+
+    add_executable(ResponseHandlerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ResponseHandlerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ResponseHandlerTest PRIVATE /GL-)
+        target_link_options(ResponseHandlerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ResponseHandlerTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient)
+    target_include_directories(ResponseHandlerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME ResponseHandlerTest COMMAND ResponseHandlerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)
