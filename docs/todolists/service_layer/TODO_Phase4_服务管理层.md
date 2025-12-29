@@ -423,43 +423,42 @@ src/naw/desktop_pet/service/
 ### 4.3.3 详细任务清单
 
 #### 4.3.3.1 缓存键生成
-- [ ] **基于请求内容的哈希**
-  - [ ] 定义 `CacheKey` 结构体
-    - [ ] `modelId`（模型ID）
-    - [ ] `messagesHash`（消息内容的哈希值）
-    - [ ] `temperature`（温度参数）
-    - [ ] `maxTokens`（最大Token数）
-    - [ ] `topP`（Top-p参数，可选）
-    - [ ] `topK`（Top-k参数，可选）
-    - [ ] `stop`（停止序列，可选）
-  - [ ] 实现 `generateKey(const ChatRequest& request)` 方法
-    - [ ] 序列化消息列表（使用 `ChatMessage::toJson()`）
-    - [ ] 计算消息内容的哈希值（使用 `std::hash` 或 SHA256）
-    - [ ] 组合所有参数生成缓存键
-    - [ ] 返回 `CacheKey` 对象
-  - [ ] 实现 `CacheKey` 的哈希函数（用于 `std::unordered_map`）
-    - [ ] 实现 `std::hash<CacheKey>` 特化
-    - [ ] 或实现 `CacheKeyHash` 函数对象
+- [x] **基于请求内容的哈希**
+  - [x] 定义 `CacheKey` 结构体
+    - [x] `modelId`（模型ID）
+    - [x] `messagesHash`（消息内容的哈希值）
+    - [x] `temperature`（温度参数）
+    - [x] `maxTokens`（最大Token数）
+    - [x] `topP`（Top-p参数，可选）
+    - [x] `topK`（Top-k参数，可选）
+    - [x] `stop`（停止序列，可选）
+  - [x] 实现 `generateKey(const ChatRequest& request)` 方法
+    - [x] 序列化消息列表（使用 `ChatMessage::toJson()`）
+    - [x] 计算消息内容的哈希值（使用 `std::hash` 或 SHA256）
+    - [x] 组合所有参数生成缓存键
+    - [x] 返回 `CacheKey` 对象
+  - [x] 实现 `CacheKey` 的哈希函数（用于 `std::unordered_map`）
+    - [x] 实现 `CacheKeyHash` 函数对象（使用自定义哈希函数对象避免 MSVC 特化问题）
 
-- [ ] **模型ID、温度等参数包含**
-  - [ ] 确保缓存键包含所有影响响应的参数
-    - [ ] 模型ID（不同模型响应不同）
-    - [ ] 温度参数（temperature 影响随机性）
-    - [ ] 采样参数（top_p、top_k 影响输出）
-    - [ ] 停止序列（stop 影响输出长度）
-    - [ ] 最大Token数（max_tokens 影响输出长度）
-  - [ ] 实现参数序列化
-    - [ ] 将参数组合成字符串
-    - [ ] 计算哈希值
-  - [ ] 处理可选参数
-    - [ ] 未设置的参数使用默认值或特殊标记
+- [x] **模型ID、温度等参数包含**
+  - [x] 确保缓存键包含所有影响响应的参数
+    - [x] 模型ID（不同模型响应不同）
+    - [x] 温度参数（temperature 影响随机性）
+    - [x] 采样参数（top_p、top_k 影响输出）
+    - [x] 停止序列（stop 影响输出长度）
+    - [x] 最大Token数（max_tokens 影响输出长度）
+  - [x] 实现参数序列化
+    - [x] 将参数组合成字符串
+    - [x] 计算哈希值
+  - [x] 处理可选参数
+    - [x] 未设置的参数使用默认值或特殊标记
 
-- [ ] **缓存键比较**
-  - [ ] 实现 `CacheKey` 的相等比较运算符（`operator==`）
-    - [ ] 比较所有字段
-  - [ ] 确保缓存键的唯一性
-    - [ ] 相同请求生成相同缓存键
-    - [ ] 不同请求生成不同缓存键
+- [x] **缓存键比较**
+  - [x] 实现 `CacheKey` 的相等比较运算符（`operator==`）
+    - [x] 比较所有字段
+  - [x] 确保缓存键的唯一性
+    - [x] 相同请求生成相同缓存键
+    - [x] 不同请求生成不同缓存键
 
 **验收标准**：
 - 单测验证：相同请求生成相同缓存键。
@@ -467,33 +466,33 @@ src/naw/desktop_pet/service/
 - 单测验证：参数变化时缓存键也变化。
 
 #### 4.3.3.2 缓存存储实现
-- [ ] **内存缓存实现**
-  - [ ] 使用 `std::unordered_map<CacheKey, CacheEntry>` 存储缓存
-  - [ ] 定义 `CacheEntry` 结构体
-    - [ ] `response`（ChatResponse对象）
-    - [ ] `timestamp`（存储时间戳）
-    - [ ] `ttl`（Time to live，生存时间）
-    - [ ] `accessCount`（访问次数，可选，用于LRU）
-    - [ ] `lastAccessTime`（最后访问时间，可选，用于LRU）
-  - [ ] 实现线程安全（使用 `std::mutex` 保护）
+- [x] **内存缓存实现**
+  - [x] 使用 `std::unordered_map<CacheKey, CacheEntry, CacheKeyHash>` 存储缓存
+  - [x] 定义 `CacheEntry` 结构体
+    - [x] `response`（ChatResponse对象）
+    - [x] `timestamp`（存储时间戳）
+    - [x] `ttl`（Time to live，生存时间）
+    - [x] `accessCount`（访问次数，可选，用于LRU）
+    - [x] `lastAccessTime`（最后访问时间，可选，用于LRU）
+  - [x] 实现线程安全（使用 `std::mutex` 保护）
 
-- [ ] **缓存条目结构**
-  - [ ] 实现 `put(const CacheKey& key, const ChatResponse& response, std::chrono::seconds ttl)` 方法
-    - [ ] 创建 `CacheEntry` 对象
-    - [ ] 设置时间戳和 TTL
-    - [ ] 存储到缓存映射
-    - [ ] 检查缓存大小限制（如果实现）
-    - [ ] 线程安全
-  - [ ] 实现缓存大小限制（可选）
-    - [ ] 从配置读取 `cache.max_size` 或 `cache.max_entries`
-    - [ ] 超过限制时使用 LRU 策略淘汰旧条目
+- [x] **缓存条目结构**
+  - [x] 实现 `put(const CacheKey& key, const ChatResponse& response, std::optional<std::chrono::seconds> ttl)` 方法
+    - [x] 创建 `CacheEntry` 对象
+    - [x] 设置时间戳和 TTL
+    - [x] 存储到缓存映射
+    - [x] 检查缓存大小限制（如果实现）
+    - [x] 线程安全
+  - [x] 实现缓存大小限制（可选）
+    - [x] 从配置读取 `cache.max_entries`
+    - [x] 超过限制时使用 LRU 策略淘汰旧条目
 
-- [ ] **TTL管理**
-  - [ ] 从 `ConfigManager` 读取 `cache.default_ttl_seconds` 配置
-  - [ ] 支持按请求设置 TTL（可选）
-  - [ ] 实现 TTL 检查
-    - [ ] `isExpired(const CacheEntry& entry)` - 检查条目是否过期
-    - [ ] 比较当前时间与 `timestamp + ttl`
+- [x] **TTL管理**
+  - [x] 从 `ConfigManager` 读取 `cache.default_ttl_seconds` 配置
+  - [x] 支持按请求设置 TTL（可选）
+  - [x] 实现 TTL 检查
+    - [x] `isExpired(const CacheEntry& entry)` - 检查条目是否过期
+    - [x] 比较当前时间与 `timestamp + ttl`
 
 **验收标准**：
 - 单测验证：缓存条目正确存储和检索。
@@ -501,59 +500,59 @@ src/naw/desktop_pet/service/
 - 单测验证：线程安全（并发读写无竞态条件）。
 
 #### 4.3.3.3 缓存查询
-- [ ] **缓存查找实现**
-  - [ ] 实现 `get(const CacheKey& key)` 方法
-    - [ ] 在缓存映射中查找键
-    - [ ] 如果找到，检查是否过期
-    - [ ] 如果未过期，更新访问统计（如果实现 LRU）
-    - [ ] 返回 `std::optional<ChatResponse>`
-    - [ ] 如果未找到或已过期，返回 `std::nullopt`
-    - [ ] 线程安全
-  - [ ] 实现缓存命中统计
-    - [ ] 记录缓存命中次数
-    - [ ] 记录缓存未命中次数
+- [x] **缓存查找实现**
+  - [x] 实现 `get(const CacheKey& key)` 方法
+    - [x] 在缓存映射中查找键
+    - [x] 如果找到，检查是否过期
+    - [x] 如果未过期，更新访问统计（如果实现 LRU）
+    - [x] 返回 `std::optional<ChatResponse>`
+    - [x] 如果未找到或已过期，返回 `std::nullopt`
+    - [x] 线程安全
+  - [x] 实现缓存命中统计
+    - [x] 记录缓存命中次数
+    - [x] 记录缓存未命中次数
 
-- [ ] **缓存有效性检查**
-  - [ ] 实现 `isValid(const CacheEntry& entry)` 方法
-    - [ ] 检查是否过期
-    - [ ] 检查响应是否有效（可选）
-  - [ ] 在查询时自动清理过期条目（可选）
-    - [ ] 发现过期条目时删除
-    - [ ] 或定期清理（见 4.3.3.4）
+- [x] **缓存有效性检查**
+  - [x] 实现 `isValid(const CacheEntry& entry)` 方法
+    - [x] 检查是否过期
+    - [x] 检查响应是否有效（可选）
+  - [x] 在查询时自动清理过期条目（可选）
+    - [x] 发现过期条目时删除
+    - [x] 或定期清理（见 4.3.3.4）
 
 **验收标准**：
 - 单测验证：缓存查询正确（命中/未命中/过期都能正确处理）。
 - 单测验证：缓存命中统计准确。
 
 #### 4.3.3.4 缓存过期清理
-- [ ] **过期条目清理**
-  - [ ] 实现 `evictExpired()` 方法
-    - [ ] 遍历所有缓存条目
-    - [ ] 检查每个条目是否过期
-    - [ ] 删除过期条目
-    - [ ] 返回清理的条目数
-    - [ ] 线程安全
-  - [ ] 实现定期清理机制
-    - [ ] 定义清理线程或定时器
-    - [ ] 定期调用 `evictExpired()`
-    - [ ] 从配置读取清理间隔（`cache.cleanup_interval_seconds`）
+- [x] **过期条目清理**
+  - [x] 实现 `evictExpired()` 方法
+    - [x] 遍历所有缓存条目
+    - [x] 检查每个条目是否过期
+    - [x] 删除过期条目
+    - [x] 返回清理的条目数
+    - [x] 线程安全
+  - [x] 实现定期清理机制
+    - [x] 定义清理线程或定时器
+    - [x] 定期调用 `evictExpired()`
+    - [x] 从配置读取清理间隔（`cache.cleanup_interval_seconds`）
 
-- [ ] **LRU淘汰策略（可选）**
-  - [ ] 实现 LRU（Least Recently Used）淘汰
-    - [ ] 维护访问时间戳
-    - [ ] 缓存满时淘汰最久未使用的条目
-  - [ ] 实现 `evictLRU(size_t count)` 方法
-    - [ ] 按 `lastAccessTime` 排序
-    - [ ] 删除最久未使用的 N 个条目
+- [x] **LRU淘汰策略（可选）**
+  - [x] 实现 LRU（Least Recently Used）淘汰
+    - [x] 维护访问时间戳
+    - [x] 缓存满时淘汰最久未使用的条目
+  - [x] 实现 `evictLRU(size_t count)` 方法
+    - [x] 按 `lastAccessTime` 排序
+    - [x] 删除最久未使用的 N 个条目
 
-- [ ] **缓存大小管理**
-  - [ ] 实现缓存大小限制
-    - [ ] 从配置读取 `cache.max_size_mb` 或 `cache.max_entries`
-    - [ ] 计算当前缓存大小（内存占用）
-    - [ ] 超过限制时触发清理或淘汰
-  - [ ] 实现 `getCacheSize()` 方法
-    - [ ] 返回当前缓存条目数
-    - [ ] 返回当前缓存大小（字节）
+- [x] **缓存大小管理**
+  - [x] 实现缓存大小限制
+    - [x] 从配置读取 `cache.max_entries`
+    - [x] 计算当前缓存大小（内存占用，估算）
+    - [x] 超过限制时触发清理或淘汰
+  - [x] 实现 `getCacheSize()` 方法
+    - [x] 返回当前缓存条目数
+    - [x] 返回当前缓存大小（字节，通过 `getStatistics()` 获取）
 
 **验收标准**：
 - 单测验证：过期条目被正确清理。
@@ -561,39 +560,39 @@ src/naw/desktop_pet/service/
 - 单测验证：LRU 淘汰策略正确（如果实现）。
 
 #### 4.3.3.5 缓存统计（命中率等）
-- [ ] **统计数据结构**
-  - [ ] 定义 `CacheStatistics` 结构体
-    - [ ] `totalHits`（总命中数）
-    - [ ] `totalMisses`（总未命中数）
-    - [ ] `hitRate`（命中率，计算得出：`hits / (hits + misses)`）
-    - [ ] `totalEntries`（当前缓存条目数）
-    - [ ] `totalSize`（当前缓存大小，字节）
-    - [ ] `evictedEntries`（被淘汰的条目数）
-  - [ ] 使用线程安全的数据结构
+- [x] **统计数据结构**
+  - [x] 定义 `CacheStatistics` 结构体
+    - [x] `totalHits`（总命中数）
+    - [x] `totalMisses`（总未命中数）
+    - [x] `hitRate`（命中率，计算得出：`hits / (hits + misses)`）
+    - [x] `totalEntries`（当前缓存条目数）
+    - [x] `totalSize`（当前缓存大小，字节）
+    - [x] `evictedEntries`（被淘汰的条目数）
+  - [x] 使用线程安全的数据结构
 
-- [ ] **统计更新**
-  - [ ] 在缓存查询时更新统计
-    - [ ] 命中时 `totalHits++`
-    - [ ] 未命中时 `totalMisses++`
-  - [ ] 在缓存存储时更新统计
-    - [ ] `totalEntries++`
-    - [ ] `totalSize += entrySize`
-  - [ ] 在缓存清理时更新统计
-    - [ ] `evictedEntries += evictedCount`
-    - [ ] `totalEntries -= evictedCount`
+- [x] **统计更新**
+  - [x] 在缓存查询时更新统计
+    - [x] 命中时 `totalHits++`
+    - [x] 未命中时 `totalMisses++`
+  - [x] 在缓存存储时更新统计
+    - [x] `totalEntries++`
+    - [x] `totalSize += entrySize`
+  - [x] 在缓存清理时更新统计
+    - [x] `evictedEntries += evictedCount`
+    - [x] `totalEntries -= evictedCount`
 
-- [ ] **统计查询接口**
-  - [ ] 实现 `getStatistics()` 方法
-    - [ ] 返回完整的 `CacheStatistics` 结构
-    - [ ] 计算命中率（`totalHits / (totalHits + totalMisses)`）
-  - [ ] 实现 `getHitRate()` 方法
-    - [ ] 返回当前命中率（0-1）
+- [x] **统计查询接口**
+  - [x] 实现 `getStatistics()` 方法
+    - [x] 返回完整的 `CacheStatistics` 结构
+    - [x] 计算命中率（`totalHits / (totalHits + totalMisses)`）
+  - [x] 实现 `getHitRate()` 方法
+    - [x] 返回当前命中率（0-1）
 
-- [ ] **缓存清空接口**
-  - [ ] 实现 `clear()` 方法
-    - [ ] 清空所有缓存条目
-    - [ ] 重置统计信息
-    - [ ] 线程安全
+- [x] **缓存清空接口**
+  - [x] 实现 `clear()` 方法
+    - [x] 清空所有缓存条目
+    - [x] 重置统计信息
+    - [x] 线程安全
 
 **验收标准**：
 - 单测验证：统计信息正确更新。
@@ -618,12 +617,12 @@ src/naw/desktop_pet/service/
   - [ ] 缓存集成测试（缓存查询、缓存存储、缓存策略）
   - [ ] 响应统计测试（统计更新、缓存命中率）
 
-- [ ] **CacheManager测试**
-  - [ ] 缓存键生成测试（相同请求相同键、不同请求不同键）
-  - [ ] 缓存存储测试（存储/检索、TTL管理、线程安全）
-  - [ ] 缓存查询测试（命中/未命中/过期处理）
-  - [ ] 缓存清理测试（过期清理、LRU淘汰、定期清理）
-  - [ ] 缓存统计测试（命中率计算、统计更新）
+- [x] **CacheManager测试**
+  - [x] 缓存键生成测试（相同请求相同键、不同请求不同键）
+  - [x] 缓存存储测试（存储/检索、TTL管理、线程安全）
+  - [x] 缓存查询测试（命中/未命中/过期处理）
+  - [x] 缓存清理测试（过期清理、LRU淘汰、定期清理）
+  - [x] 缓存统计测试（命中率计算、统计更新）
 
 ### 4.4.2 集成测试
 - [ ] **RequestManager + APIClient 集成测试**
@@ -686,16 +685,16 @@ src/naw/desktop_pet/service/
 **进度**: 0/5 主要模块完成
 
 ### 4.3 缓存管理器（CacheManager）
-- [ ] 缓存键生成
-- [ ] 缓存存储实现
-- [ ] 缓存查询
-- [ ] 缓存过期清理
-- [ ] 缓存统计
-- [ ] 单元测试
+- [x] 缓存键生成
+- [x] 缓存存储实现
+- [x] 缓存查询
+- [x] 缓存过期清理
+- [x] 缓存统计
+- [x] 单元测试
 
-**进度**: 0/6 主要模块完成
+**进度**: 6/6 主要模块完成
 
-**总计**: 5/17 主要模块完成
+**总计**: 11/17 主要模块完成
 
 ---
 
@@ -741,5 +740,18 @@ Phase4 (服务管理层)
   - 📝 文件已创建：
     - `include/naw/desktop_pet/service/RequestManager.h`
     - `src/naw/desktop_pet/service/RequestManager.cpp`
+  - 📝 已更新构建系统：`src/naw/desktop_pet/service/CMakeLists.txt`
+
+- ✅ 完成 4.3 缓存管理器（CacheManager）的实现
+  - ✅ 实现缓存键生成（基于请求内容的哈希、参数包含、键比较）
+  - ✅ 实现缓存存储（内存缓存、缓存条目结构、TTL管理、大小限制、LRU淘汰）
+  - ✅ 实现缓存查询（缓存查找、命中统计、有效性检查）
+  - ✅ 实现缓存过期清理（过期条目清理、定期清理机制、LRU淘汰策略）
+  - ✅ 实现缓存统计（统计数据结构、统计更新、统计查询接口、缓存清空）
+  - ✅ 完成单元测试（17个测试用例，覆盖所有功能点）
+  - 📝 文件已创建：
+    - `include/naw/desktop_pet/service/CacheManager.h`
+    - `src/naw/desktop_pet/service/CacheManager.cpp`
+    - `src/naw/desktop_pet/service/tests/CacheManagerTest.cpp`
   - 📝 已更新构建系统：`src/naw/desktop_pet/service/CMakeLists.txt`
 

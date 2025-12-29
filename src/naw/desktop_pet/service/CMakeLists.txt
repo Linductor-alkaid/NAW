@@ -11,6 +11,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/TaskRouter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ContextManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RequestManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/CacheManager.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -22,6 +23,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/TaskRouter.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ContextManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/RequestManager.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CacheManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -212,6 +214,17 @@ if(BUILD_TESTING)
     target_link_libraries(RequestManagerTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient NAW_ServiceUtils)
     target_include_directories(RequestManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME RequestManagerTest COMMAND RequestManagerTest)
+
+    add_executable(CacheManagerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/CacheManagerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(CacheManagerTest PRIVATE /GL-)
+        target_link_options(CacheManagerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(CacheManagerTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(CacheManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME CacheManagerTest COMMAND CacheManagerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)
