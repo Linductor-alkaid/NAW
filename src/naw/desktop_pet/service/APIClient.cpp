@@ -161,6 +161,68 @@ std::future<types::ChatResponse> APIClient::chatAsync(const types::ChatRequest& 
     return std::async(std::launch::async, [this, req]() { return this->chat(req); });
 }
 
+std::future<types::ChatResponse> APIClient::chatAsync(const types::ChatRequest& req, utils::HttpClient::CancelToken* token) {
+    // 使用 HttpClient 的异步方法，支持取消
+    return std::async(std::launch::async, [this, req, token]() -> types::ChatResponse {
+        HttpClient client(m_baseUrl);
+        configureHttpClient(client, m_apiKey, m_timeoutMs);
+
+        const std::string endpoint = "/chat/completions";
+        const std::string url = joinUrl(m_baseUrl, endpoint);
+        const std::string body = req.toJson().dump();
+
+        // 准备请求头
+        std::map<std::string, std::string> headers;
+        if (!m_apiKey.empty()) headers["Authorization"] = "Bearer " + m_apiKey;
+        headers["Content-Type"] = "application/json";
+        headers["Accept"] = "application/json";
+
+        // 使用异步POST请求，支持取消
+        auto future = client.postAsync(url, body, "application/json", headers, nullptr, token);
+        const auto resp = future.get();
+
+        // 构建 HttpRequest 用于错误上下文
+        HttpRequest hreq;
+        hreq.method = HttpMethod::POST;
+        hreq.url = url;
+        hreq.body = body;
+        hreq.timeoutMs = m_timeoutMs;
+        hreq.followRedirects = true;
+        hreq.headers = headers;
+
+        if (!resp.isSuccess()) {
+            auto info = ErrorHandler::fromHttpResponse(resp, std::optional<HttpRequest>{hreq});
+            enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
+            throw ApiClientError(info);
+        }
+
+        auto parsed = resp.asJson();
+        if (!parsed.has_value()) {
+            ErrorInfo info;
+            info.errorType = ErrorType::UnknownError;
+            info.errorCode = resp.statusCode;
+            info.message = "Invalid JSON response";
+            info.details = nlohmann::json{
+                {"body_snippet", resp.body.substr(0, 1024)},
+            };
+            enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
+            throw ApiClientError(info);
+        }
+
+        auto r = ChatResponse::fromJson(*parsed);
+        if (!r.has_value()) {
+            ErrorInfo info;
+            info.errorType = ErrorType::UnknownError;
+            info.errorCode = resp.statusCode;
+            info.message = "Failed to parse ChatResponse";
+            info.details = *parsed;
+            enrichErrorInfoContext(info, req.model, endpoint, std::optional<HttpRequest>{hreq});
+            throw ApiClientError(info);
+        }
+        return *r;
+    });
+}
+
 // ========= SSE decoder =========
 namespace {
 

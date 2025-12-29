@@ -5,11 +5,13 @@
 
 #include "httplib.h"
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
 #include <functional>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <sstream>
 #include <stdexcept>
@@ -325,6 +327,161 @@ int main() {
         CHECK_EQ(finalResp.toolCalls[0].function.name, "get_weather");
         CHECK_TRUE(finalResp.toolCalls[0].function.arguments.is_object() ||
                    finalResp.toolCalls[0].function.arguments.is_string());
+    }});
+
+    tests.push_back({"async_chat_success_returns_future", []() {
+        setEnvVar("SILICONFLOW_API_KEY", "test_key_123");
+
+        httplib::Server server;
+        server.Post("/v1/chat/completions", [](const httplib::Request& req, httplib::Response& res) {
+            const auto auth = req.get_header_value("Authorization");
+            if (auth != "Bearer test_key_123") {
+                res.status = 401;
+                res.set_content(R"({"error":{"message":"unauthorized"}})", "application/json");
+                return;
+            }
+            res.status = 200;
+            res.set_content(
+                R"({"model":"m1","choices":[{"index":0,"message":{"role":"assistant","content":"async response"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}})",
+                "application/json");
+        });
+
+        const int port = server.bind_to_any_port("127.0.0.1");
+        CHECK_TRUE(port > 0);
+        ServerGuard guard(server);
+        guard.th = std::thread([&]() { server.listen_after_bind(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        ConfigManager cm;
+        ErrorInfo err;
+        CHECK_TRUE(cm.loadFromString(
+            nlohmann::json{
+                {"api", {{"base_url", makeLocalBaseUrl(port)}, {"api_key", "${SILICONFLOW_API_KEY}"}, {"default_timeout_ms", 30000}}},
+                {"models", nlohmann::json::array()},
+            }
+                .dump(),
+            &err));
+        cm.applyEnvironmentOverrides();
+
+        APIClient api(cm);
+        ChatRequest req;
+        req.model = "m1";
+        req.messages = {ChatMessage{MessageRole::User, "hello"}};
+
+        auto future = api.chatAsync(req);
+        const auto resp = future.get();
+        CHECK_EQ(resp.content, "async response");
+        CHECK_EQ(resp.totalTokens, 3u);
+    }});
+
+    tests.push_back({"async_chat_cancel_throws_network_error", []() {
+        setEnvVar("SILICONFLOW_API_KEY", "test_key_123");
+
+        httplib::Server server;
+        server.Post("/v1/chat/completions", [](const httplib::Request&, httplib::Response& res) {
+            // 服务器延迟响应，但取消应该在请求到达服务器之前就生效
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            res.status = 200;
+            res.set_content(
+                R"({"model":"m1","choices":[{"index":0,"message":{"role":"assistant","content":"should not reach here"},"finish_reason":"stop"}]})",
+                "application/json");
+        });
+
+        const int port = server.bind_to_any_port("127.0.0.1");
+        CHECK_TRUE(port > 0);
+        ServerGuard guard(server);
+        guard.th = std::thread([&]() { server.listen_after_bind(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        ConfigManager cm;
+        ErrorInfo err;
+        CHECK_TRUE(cm.loadFromString(
+            nlohmann::json{
+                {"api", {{"base_url", makeLocalBaseUrl(port)}, {"api_key", "${SILICONFLOW_API_KEY}"}, {"default_timeout_ms", 30000}}},
+                {"models", nlohmann::json::array()},
+            }
+                .dump(),
+            &err));
+        cm.applyEnvironmentOverrides();
+
+        APIClient api(cm);
+        ChatRequest req;
+        req.model = "m1";
+        req.messages = {ChatMessage{MessageRole::User, "hello"}};
+
+        // 创建取消令牌，在启动请求前就设置为已取消
+        // 这样可以确保HttpClient的取消检查在任务开始时能检测到取消标志
+        using HttpClient = naw::desktop_pet::service::utils::HttpClient;
+        HttpClient::CancelToken token{std::make_shared<std::atomic<bool>>(true)};
+
+        // 启动异步请求（此时取消标志已经为true）
+        auto future = api.chatAsync(req, &token);
+
+        // 验证取消后抛出异常，错误类型为NetworkError
+        try {
+            (void)future.get();
+            CHECK_TRUE(false); // 不应该到达这里
+        } catch (const APIClient::ApiClientError& e) {
+            CHECK_EQ(e.errorInfo().errorType, ErrorType::NetworkError);
+            CHECK_EQ(e.errorInfo().errorCode, 0);
+            // 验证错误信息包含"Cancelled"（可能在message或toString中）
+            const std::string msg = e.errorInfo().message;
+            const std::string whatStr = e.what() ? std::string(e.what()) : "";
+            const std::string jsonStr = e.errorInfo().toString();
+            CHECK_TRUE(msg.find("Cancelled") != std::string::npos ||
+                       whatStr.find("Cancelled") != std::string::npos ||
+                       jsonStr.find("Cancelled") != std::string::npos);
+        }
+    }});
+
+    tests.push_back({"async_chat_cancel_before_request_starts", []() {
+        setEnvVar("SILICONFLOW_API_KEY", "test_key_123");
+
+        httplib::Server server;
+        server.Post("/v1/chat/completions", [](const httplib::Request&, httplib::Response& res) {
+            res.status = 200;
+            res.set_content(
+                R"({"model":"m1","choices":[{"index":0,"message":{"role":"assistant","content":"should not reach here"},"finish_reason":"stop"}]})",
+                "application/json");
+        });
+
+        const int port = server.bind_to_any_port("127.0.0.1");
+        CHECK_TRUE(port > 0);
+        ServerGuard guard(server);
+        guard.th = std::thread([&]() { server.listen_after_bind(); });
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+        ConfigManager cm;
+        ErrorInfo err;
+        CHECK_TRUE(cm.loadFromString(
+            nlohmann::json{
+                {"api", {{"base_url", makeLocalBaseUrl(port)}, {"api_key", "${SILICONFLOW_API_KEY}"}, {"default_timeout_ms", 30000}}},
+                {"models", nlohmann::json::array()},
+            }
+                .dump(),
+            &err));
+        cm.applyEnvironmentOverrides();
+
+        APIClient api(cm);
+        ChatRequest req;
+        req.model = "m1";
+        req.messages = {ChatMessage{MessageRole::User, "hello"}};
+
+        // 创建取消令牌，并立即设置为已取消
+        using HttpClient = naw::desktop_pet::service::utils::HttpClient;
+        HttpClient::CancelToken token{std::make_shared<std::atomic<bool>>(true)};
+
+        // 启动异步请求（已取消）
+        auto future = api.chatAsync(req, &token);
+
+        // 验证立即抛出取消异常
+        try {
+            (void)future.get();
+            CHECK_TRUE(false); // 不应该到达这里
+        } catch (const APIClient::ApiClientError& e) {
+            CHECK_EQ(e.errorInfo().errorType, ErrorType::NetworkError);
+            CHECK_EQ(e.errorInfo().errorCode, 0);
+        }
     }});
 
     return mini_test::run(tests);

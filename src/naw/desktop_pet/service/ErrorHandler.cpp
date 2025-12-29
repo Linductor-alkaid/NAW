@@ -85,10 +85,16 @@ const char* ErrorHandler::logLevelToString(LogLevel level) {
 
 ErrorType ErrorHandler::mapHttpStatusToErrorType(int statusCode, const std::string& transportError) {
     if (statusCode == 0) {
-        // 兼容当前 HttpClient：statusCode==0 表示传输层失败；若文案含 timeout 则归为 Timeout
+        // 兼容当前 HttpClient：statusCode==0 表示传输层失败
         std::string low = transportError;
         std::transform(low.begin(), low.end(), low.begin(), [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+        // 取消操作：明确映射为 NetworkError（表示用户主动取消，非网络故障）
+        if (low.find("cancelled") != std::string::npos || low.find("cancel") != std::string::npos) {
+            return ErrorType::NetworkError;
+        }
+        // 超时：映射为 TimeoutError
         if (low.find("timeout") != std::string::npos) return ErrorType::TimeoutError;
+        // 其他传输层错误：映射为 NetworkError
         return ErrorType::NetworkError;
     }
     if (statusCode == 408) return ErrorType::TimeoutError;

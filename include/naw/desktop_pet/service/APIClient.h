@@ -3,6 +3,7 @@
 #include "naw/desktop_pet/service/ConfigManager.h"
 #include "naw/desktop_pet/service/ErrorTypes.h"
 #include "naw/desktop_pet/service/types/RequestResponse.h"
+#include "naw/desktop_pet/service/utils/HttpClient.h"
 
 #include <cstdint>
 #include <functional>
@@ -54,7 +55,19 @@ public:
 
     // ========== 核心接口 ==========
     types::ChatResponse chat(const types::ChatRequest& req);
+    
+    /**
+     * @brief 异步 Chat Completions（不支持取消）
+     */
     std::future<types::ChatResponse> chatAsync(const types::ChatRequest& req);
+    
+    /**
+     * @brief 异步 Chat Completions（支持取消）
+     * @param req 请求参数
+     * @param token 取消令牌，可通过设置 token->cancelled->store(true) 来取消请求
+     * @return future，取消时会抛出 ApiClientError，错误类型为 NetworkError
+     */
+    std::future<types::ChatResponse> chatAsync(const types::ChatRequest& req, utils::HttpClient::CancelToken* token);
 
     // SSE 流式：阻塞直到完成或出错
     void chatStream(const types::ChatRequest& req, Callbacks cb);

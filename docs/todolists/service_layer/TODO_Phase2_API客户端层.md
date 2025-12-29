@@ -84,9 +84,11 @@ src/naw/desktop_pet/service/
 #### 2.1.3.3 异步 Chat Completions
 - [x] **接口定义**
   - [x] `std::future<ChatResponse> chatAsync(const ChatRequest& request)`
-- [ ] **取消策略**
-  - [ ] 若需要：暴露 `HttpClient::CancelToken` 并定义取消后的错误语义（例如 statusCode=0 + error="Cancelled" → ErrorType::Unknown/Network 的映射规则）
-  - [ ] 若短期不做：在文档中明确“异步不提供中途取消”，仅支持超时
+  - [x] `std::future<ChatResponse> chatAsync(const ChatRequest& request, HttpClient::CancelToken* token)`（支持取消）
+- [x] **取消策略**
+  - [x] 暴露 `HttpClient::CancelToken` 并定义取消后的错误语义
+  - [x] 取消时返回 statusCode=0 + error="Cancelled"，映射为 `ErrorType::NetworkError`
+  - [x] 在 `ErrorHandler::mapHttpStatusToErrorType` 中处理取消错误（检查 error 字符串包含 "cancelled" 或 "cancel"）
 
 **验收标准**：单测验证 future 返回、异常传播/错误返回符合约定。
 
