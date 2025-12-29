@@ -103,6 +103,10 @@
 
 ## Phase 4：服务管理层（Service Management Layer）
 
+**状态**：⏳ 未开始
+
+- 详细任务清单：`docs/todolists/service_layer/TODO_Phase4_服务管理层.md`
+
 ### 4.1 请求管理器（RequestManager）
 - [ ] 实现请求队列
   - [ ] 优先级队列实现
