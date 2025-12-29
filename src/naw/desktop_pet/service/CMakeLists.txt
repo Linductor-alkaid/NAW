@@ -7,6 +7,9 @@ option(BUILD_STT_LLM_VOICE_CHAT_EXAMPLE "Build stt_llm_voice_chat_example" OFF)
 set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ErrorHandler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ConfigManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ModelManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/TaskRouter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ContextManager.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -14,6 +17,9 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ConfigManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/APIClient.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ModelManager.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/TaskRouter.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ContextManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -155,6 +161,39 @@ if(BUILD_TESTING)
     target_link_libraries(APIClientTest PRIVATE NAW_ServiceAPIClient)
     target_include_directories(APIClientTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME APIClientTest COMMAND APIClientTest)
+
+    add_executable(ModelManagerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ModelManagerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ModelManagerTest PRIVATE /GL-)
+        target_link_options(ModelManagerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ModelManagerTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(ModelManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME ModelManagerTest COMMAND ModelManagerTest)
+
+    add_executable(TaskRouterTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/TaskRouterTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(TaskRouterTest PRIVATE /GL-)
+        target_link_options(TaskRouterTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(TaskRouterTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(TaskRouterTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME TaskRouterTest COMMAND TaskRouterTest)
+
+    add_executable(ContextManagerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ContextManagerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ContextManagerTest PRIVATE /GL-)
+        target_link_options(ContextManagerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ContextManagerTest PRIVATE NAW_ServiceFoundation NAW_ServiceUtils)
+    target_include_directories(ContextManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME ContextManagerTest COMMAND ContextManagerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)
