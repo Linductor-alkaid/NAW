@@ -10,6 +10,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ModelManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TaskRouter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ContextManager.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/RequestManager.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -20,6 +21,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ModelManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/TaskRouter.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ContextManager.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/RequestManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -43,6 +45,11 @@ target_compile_options(NAW_ServiceFoundation
     PRIVATE
         ${PROJECT_COMPILE_OPTIONS}
         $<$<CXX_COMPILER_ID:MSVC>:/utf-8>
+)
+
+target_link_libraries(NAW_ServiceFoundation
+    PUBLIC
+        NAW_ServiceAPIClient
 )
 
 set_target_properties(NAW_ServiceFoundation PROPERTIES
@@ -194,6 +201,17 @@ if(BUILD_TESTING)
     target_link_libraries(ContextManagerTest PRIVATE NAW_ServiceFoundation NAW_ServiceUtils)
     target_include_directories(ContextManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME ContextManagerTest COMMAND ContextManagerTest)
+
+    add_executable(RequestManagerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/RequestManagerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(RequestManagerTest PRIVATE /GL-)
+        target_link_options(RequestManagerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(RequestManagerTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient NAW_ServiceUtils)
+    target_include_directories(RequestManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME RequestManagerTest COMMAND RequestManagerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)
