@@ -11,6 +11,89 @@
 
 namespace naw::desktop_pet::service {
 
+// ========== 辅助函数：清理JSON中的无效UTF-8字节 ==========
+
+/**
+ * @brief 清理JSON字符串中的无效UTF-8字节，将无效字节替换为替换字符
+ */
+static std::string cleanUtf8String(const std::string& str) {
+    std::string cleaned;
+    cleaned.reserve(str.size());
+    
+    for (size_t i = 0; i < str.size(); ) {
+        unsigned char c = static_cast<unsigned char>(str[i]);
+        if (c < 0x80) {
+            // ASCII字符
+            cleaned += str[i];
+            i++;
+        } else if ((c & 0xE0) == 0xC0) {
+            // 2字节UTF-8
+            if (i + 1 < str.size() && (static_cast<unsigned char>(str[i+1]) & 0xC0) == 0x80) {
+                cleaned += str.substr(i, 2);
+                i += 2;
+            } else {
+                // 无效序列，替换为?
+                cleaned += '?';
+                i++;
+            }
+        } else if ((c & 0xF0) == 0xE0) {
+            // 3字节UTF-8
+            if (i + 2 < str.size() && 
+                (static_cast<unsigned char>(str[i+1]) & 0xC0) == 0x80 &&
+                (static_cast<unsigned char>(str[i+2]) & 0xC0) == 0x80) {
+                cleaned += str.substr(i, 3);
+                i += 3;
+            } else {
+                cleaned += '?';
+                i++;
+            }
+        } else if ((c & 0xF8) == 0xF0) {
+            // 4字节UTF-8
+            if (i + 3 < str.size() &&
+                (static_cast<unsigned char>(str[i+1]) & 0xC0) == 0x80 &&
+                (static_cast<unsigned char>(str[i+2]) & 0xC0) == 0x80 &&
+                (static_cast<unsigned char>(str[i+3]) & 0xC0) == 0x80) {
+                cleaned += str.substr(i, 4);
+                i += 4;
+            } else {
+                cleaned += '?';
+                i++;
+            }
+        } else {
+            // 无效起始字节，替换为?
+            cleaned += '?';
+            i++;
+        }
+    }
+    return cleaned;
+}
+
+/**
+ * @brief 清理JSON中的无效UTF-8字节
+ */
+static nlohmann::json cleanJsonForUtf8(const nlohmann::json& j) {
+    if (j.is_string()) {
+        return cleanUtf8String(j.get<std::string>());
+    } else if (j.is_array()) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& item : j) {
+            arr.push_back(cleanJsonForUtf8(item));
+        }
+        return arr;
+    } else if (j.is_object()) {
+        nlohmann::json obj = nlohmann::json::object();
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            // 清理键和值
+            std::string cleanedKey = cleanUtf8String(it.key());
+            obj[cleanedKey] = cleanJsonForUtf8(it.value());
+        }
+        return obj;
+    } else {
+        // 其他类型直接返回
+        return j;
+    }
+}
+
 // ========== FunctionCallResult ==========
 
 nlohmann::json FunctionCallResult::toJson() const {
@@ -417,7 +500,29 @@ std::vector<types::ChatMessage> FunctionCallingHandler::buildToolResultMessages(
 
         if (result.success && result.result.has_value()) {
             // On success, convert result to JSON string
-            message.setText(result.result.value().dump());
+            try {
+                // 尝试正常dump
+                message.setText(result.result.value().dump());
+            } catch (const nlohmann::json::exception& e) {
+                // 如果dump失败（可能是UTF-8编码问题），尝试清理JSON中的字符串
+                try {
+                    // 创建一个清理后的JSON副本
+                    nlohmann::json cleaned = cleanJsonForUtf8(result.result.value());
+                    message.setText(cleaned.dump());
+                } catch (const std::exception& e2) {
+                    // 如果还是失败，返回一个简化的错误信息
+                    message.setText("Error: Failed to serialize tool result (invalid UTF-8 encoding). Tool: " + result.toolName);
+                } catch (...) {
+                    // 捕获所有其他异常
+                    message.setText("Error: Failed to serialize tool result. Tool: " + result.toolName);
+                }
+            } catch (const std::exception& e) {
+                // 捕获其他标准异常
+                message.setText("Error: Failed to serialize tool result: " + std::string(e.what()));
+            } catch (...) {
+                // 捕获所有其他异常
+                message.setText("Error: Failed to serialize tool result");
+            }
         } else {
             // On failure, return error message
             std::string errorMsg = "Error: ";
