@@ -503,59 +503,67 @@ src/naw/desktop_pet/service/
 ### 5.3.3 详细任务清单
 
 #### 5.3.3.1 工具调用检测
-- [ ] **响应中工具调用识别**
-  - [ ] 实现 `hasToolCalls(const ChatResponse& response)` 方法
-    - [ ] 检查 `response.toolCalls` 是否非空
-    - [ ] 检查 `response.finishReason` 是否为 `"tool_calls"`
-    - [ ] 返回布尔值
-  - [ ] 实现 `extractToolCalls(const ChatResponse& response)` 方法
-    - [ ] 从响应中提取 `toolCalls` 列表
-    - [ ] 返回 `std::vector<ToolCall>` 或 `std::vector<types::ToolCall>`
-    - [ ] 处理空列表情况
+- [x] **响应中工具调用识别**
+  - [x] 实现 `hasToolCalls(const ChatResponse& response)` 方法
+    - [x] 检查 `response.toolCalls` 是否非空
+    - [x] 检查 `response.finishReason` 是否为 `"tool_calls"`
+    - [x] 返回布尔值
+  - [x] 实现 `extractToolCalls(const ChatResponse& response)` 方法
+    - [x] 从响应中提取 `toolCalls` 列表
+    - [x] 返回 `std::vector<ToolCall>` 或 `std::vector<types::ToolCall>`
+    - [x] 处理空列表情况
 
-- [ ] **工具调用参数提取**
-  - [ ] 实现 `parseToolCallArguments(const ToolCall& toolCall)` 方法
-    - [ ] 从 `toolCall.function.arguments` 提取参数（JSON字符串或JSON对象）
-    - [ ] 解析JSON参数（`nlohmann::json::parse()`）
-    - [ ] 处理JSON解析错误
-    - [ ] 返回 `nlohmann::json` 对象
-  - [ ] 实现参数验证（使用 `ToolManager::validateArguments()`）
+- [x] **工具调用参数提取**
+  - [x] 实现 `parseToolCallArguments(const ToolCall& toolCall)` 方法
+    - [x] 从 `toolCall.function.arguments` 提取参数（JSON字符串或JSON对象）
+    - [x] 解析JSON参数（`nlohmann::json::parse()`）
+    - [x] 处理JSON解析错误
+    - [x] 返回 `nlohmann::json` 对象
+    - [x] 支持将 `null` 类型视为空对象（增强健壮性）
+  - [x] 实现参数验证（使用 `ToolManager::validateArguments()`）
 
-- [ ] **工具调用结构验证**
-  - [ ] 验证工具调用ID是否存在（`toolCall.id`）
-  - [ ] 验证工具名称是否存在（`toolCall.function.name`）
-  - [ ] 验证参数格式（JSON格式）
-  - [ ] 返回验证结果
+- [x] **工具调用结构验证**
+  - [x] 实现 `validateToolCall(const ToolCall& toolCall, ToolManager& toolManager)` 方法
+    - [x] 验证工具调用ID是否存在（`toolCall.id`）
+    - [x] 验证工具名称是否存在（`toolCall.function.name`）
+    - [x] 验证参数格式（JSON格式）
+    - [x] 验证工具是否在 ToolManager 中注册
+    - [x] 返回验证结果
 
 **验收标准**：
-- 单测验证：工具调用识别正确（有/无工具调用）。
-- 单测验证：工具调用参数提取正确（JSON解析）。
-- 单测验证：参数验证正确（无效参数时返回错误）。
+- [x] 单测验证：工具调用识别正确（有/无工具调用）。
+- [x] 单测验证：工具调用参数提取正确（JSON解析）。
+- [x] 单测验证：参数验证正确（无效参数时返回错误）。
 
 #### 5.3.3.2 工具调用执行流程
-- [ ] **批量工具调用处理**
-  - [ ] 定义 `FunctionCallResult` 结构体
-    - [ ] `toolCallId`（工具调用ID）
-    - [ ] `toolName`（工具名称）
-    - [ ] `result`（执行结果，`nlohmann::json`）
-    - [ ] `error`（错误信息，如果执行失败）
-    - [ ] `executionTimeMs`（执行时间，毫秒，可选）
-  - [ ] 实现 `executeToolCalls(const std::vector<ToolCall>& toolCalls, ToolManager& toolManager)` 方法
-    - [ ] 遍历所有工具调用
-    - [ ] 对每个工具调用执行以下步骤：
-      - [ ] 提取工具名称和参数
-      - [ ] 调用 `ToolManager::executeTool()` 执行工具
-      - [ ] 捕获执行异常
-      - [ ] 创建 `FunctionCallResult` 对象
-      - [ ] 添加到结果列表
-    - [ ] 返回 `std::vector<FunctionCallResult>`
+- [x] **批量工具调用处理**
+  - [x] 定义 `FunctionCallResult` 结构体
+    - [x] `toolCallId`（工具调用ID）
+    - [x] `toolName`（工具名称）
+    - [x] `result`（执行结果，`nlohmann::json`）
+    - [x] `error`（错误信息，如果执行失败）
+    - [x] `executionTimeMs`（执行时间，毫秒）
+    - [x] `success`（是否成功）
+    - [x] `toJson()` 方法（序列化支持）
+  - [x] 实现 `executeToolCalls(const std::vector<ToolCall>& toolCalls, ToolManager& toolManager)` 方法
+    - [x] 遍历所有工具调用
+    - [x] 对每个工具调用执行以下步骤：
+      - [x] 记录开始时间
+      - [x] 提取工具名称和参数（使用 `parseToolCallArguments`）
+      - [x] 验证工具调用（使用 `validateToolCall`）
+      - [x] 调用 `ToolManager::executeTool()` 执行工具
+      - [x] 捕获执行异常（`std::exception` 和未知异常）
+      - [x] 计算执行时间
+      - [x] 创建 `FunctionCallResult` 对象
+      - [x] 添加到结果列表
+    - [x] 返回 `std::vector<FunctionCallResult>`
 
-- [ ] **结果收集**
-  - [ ] 实现结果聚合逻辑
-    - [ ] 收集所有成功的结果
-    - [ ] 收集所有失败的结果（错误信息）
-  - [ ] 实现结果统计（成功数、失败数，可选）
-  - [ ] 处理部分失败情况（部分工具成功、部分失败）
+- [x] **结果收集**
+  - [x] 实现结果聚合逻辑
+    - [x] 收集所有成功的结果
+    - [x] 收集所有失败的结果（错误信息）
+  - [x] 处理部分失败情况（部分工具成功、部分失败）
+  - [x] 每个结果包含完整的执行信息（成功/失败、结果/错误、执行时间）
 
 - [ ] **并发执行（可选）**
   - [ ] 支持并发执行多个工具调用（使用 `std::async` 或线程池）
@@ -568,39 +576,40 @@ src/naw/desktop_pet/service/
   - [ ] 返回超时错误信息
 
 **验收标准**：
-- 单测验证：批量工具调用执行正确（所有工具成功）。
-- 单测验证：部分失败处理正确（部分工具失败）。
-- 单测验证：执行结果收集正确。
+- [x] 单测验证：批量工具调用执行正确（所有工具成功）。
+- [x] 单测验证：部分失败处理正确（部分工具失败）。
+- [x] 单测验证：执行结果收集正确。
+- [x] 单测验证：执行时间记录正确。
 
 #### 5.3.3.3 后续请求构建
-- [ ] **工具结果消息构建**
-  - [ ] 实现 `buildToolResultMessages(const std::vector<FunctionCallResult>& results)` 方法
-    - [ ] 遍历所有工具执行结果
-    - [ ] 对每个结果创建 `ChatMessage` 对象
-      - [ ] 设置 `role = "tool"`
-      - [ ] 设置 `name = result.toolName`
-      - [ ] 设置 `toolCallId = result.toolCallId`
-      - [ ] 设置 `content`：
-        - [ ] 成功时：`result.result.dump()`（JSON字符串）
-        - [ ] 失败时：`"错误: " + result.error`
-    - [ ] 返回 `std::vector<ChatMessage>`
-  - [ ] 实现消息格式验证（确保符合API要求）
+- [x] **工具结果消息构建**
+  - [x] 实现 `buildToolResultMessages(const std::vector<FunctionCallResult>& results)` 方法
+    - [x] 遍历所有工具执行结果
+    - [x] 对每个结果创建 `ChatMessage` 对象
+      - [x] 设置 `role = MessageRole::Tool`
+      - [x] 设置 `name = result.toolName`
+      - [x] 设置 `toolCallId = result.toolCallId`
+      - [x] 设置 `content`：
+        - [x] 成功时：`result.result.value().dump()`（JSON字符串）
+        - [x] 失败时：`"Error: " + result.error.value()`
+    - [x] 返回 `std::vector<ChatMessage>`
+  - [x] 消息格式符合 API 要求（使用 `ChatMessage` 结构）
 
-- [ ] **多轮对话支持**
-  - [ ] 实现 `buildFollowUpRequest(const std::vector<ChatMessage>& originalMessages, const std::vector<ChatMessage>& toolResults)` 方法
-    - [ ] 合并原始消息和工具结果消息
-    - [ ] 保持消息顺序（原始消息在前，工具结果在后）
-    - [ ] 创建新的 `ChatRequest` 对象
-    - [ ] 设置请求参数（模型、温度等，从原始请求继承或使用默认值）
-    - [ ] 返回 `ChatRequest`
-  - [ ] 支持多轮工具调用（工具调用 -> 工具结果 -> 再次工具调用）
-  - [ ] 实现轮数限制（避免无限循环，可选）
+- [x] **多轮对话支持**
+  - [x] 实现 `buildFollowUpRequest(const std::vector<ChatMessage>& originalMessages, const std::vector<ChatMessage>& toolResults, const ChatRequest& originalRequest)` 方法
+    - [x] 合并原始消息和工具结果消息
+    - [x] 保持消息顺序（原始消息在前，工具结果在后）
+    - [x] 创建新的 `ChatRequest` 对象
+    - [x] 设置请求参数（从原始请求继承）
+    - [x] 返回 `ChatRequest`
+  - [x] 支持多轮工具调用（工具调用 -> 工具结果 -> 再次工具调用）
+  - [x] 实现完整流程方法 `processToolCalls`（整合检测、执行、构建）
 
-- [ ] **请求参数继承**
-  - [ ] 从原始请求继承模型ID（`request.model`）
-  - [ ] 从原始请求继承温度等参数（`temperature`、`maxTokens` 等）
-  - [ ] 从原始请求继承工具列表（`tools`，如果支持）
-  - [ ] 从原始请求继承其他参数（`stop`、`topP` 等）
+- [x] **请求参数继承**
+  - [x] 从原始请求继承模型ID（`request.model`）
+  - [x] 从原始请求继承温度等参数（`temperature`、`maxTokens` 等）
+  - [x] 从原始请求继承工具列表（`tools`）
+  - [x] 从原始请求继承其他参数（`stop`、`topP`、`topK`、`stream`、`toolChoice` 等）
 
 - [ ] **工具调用上下文管理（可选）**
   - [ ] 记录工具调用历史（用于调试和统计）
@@ -608,9 +617,10 @@ src/naw/desktop_pet/service/
   - [ ] 实现工具调用结果缓存（相同工具调用参数时复用结果，可选）
 
 **验收标准**：
-- 单测验证：工具结果消息构建正确（格式、内容）。
-- 单测验证：后续请求构建正确（消息合并、参数继承）。
-- 单测验证：多轮工具调用支持正确（多轮对话流程）。
+- [x] 单测验证：工具结果消息构建正确（格式、内容）。
+- [x] 单测验证：后续请求构建正确（消息合并、参数继承）。
+- [x] 单测验证：多轮工具调用支持正确（多轮对话流程）。
+- [x] 单测验证：完整流程方法 `processToolCalls` 正确工作。
 
 ---
 
@@ -966,11 +976,13 @@ src/naw/desktop_pet/service/
   - [x] get_project_structure工具测试（结构分析、CMake解析）
   - [x] analyze_code工具测试（函数提取、类提取、依赖分析）
 
-- [ ] **FunctionCallingHandler测试**
-  - [ ] 工具调用检测测试（识别、参数提取）
-  - [ ] 工具调用执行测试（批量执行、结果收集）
-  - [ ] 后续请求构建测试（消息构建、参数继承）
-  - [ ] 多轮对话测试（多轮工具调用流程）
+- [x] **FunctionCallingHandler测试**
+  - [x] 工具调用检测测试（识别、参数提取）
+  - [x] 工具调用执行测试（批量执行、结果收集、执行时间记录）
+  - [x] 后续请求构建测试（消息构建、参数继承）
+  - [x] 多轮对话测试（多轮工具调用流程）
+  - [x] 完整流程测试（`processToolCalls` 方法）
+  - [x] 错误处理测试（工具不存在、参数验证失败、执行失败等）
 
 - [ ] **MCPService测试**
   - [ ] MCP协议测试（消息序列化/反序列化）
@@ -1067,12 +1079,12 @@ src/naw/desktop_pet/service/
 **进度**: 8/8 主要模块完成 ✅
 
 ### 5.3 Function Calling处理器（FunctionCallingHandler）
-- [ ] 工具调用检测
-- [ ] 工具调用执行流程
-- [ ] 后续请求构建
-- [ ] 单元测试
+- [x] 工具调用检测
+- [x] 工具调用执行流程（基本功能完成，并发和超时控制为可选功能）
+- [x] 后续请求构建（基本功能完成，上下文管理为可选功能）
+- [x] 单元测试
 
-**进度**: 0/4 主要模块完成
+**进度**: 4/4 主要模块完成 ✅
 
 ### 5.4 MCP服务（MCPService）
 - [ ] MCP协议基础
@@ -1095,23 +1107,23 @@ src/naw/desktop_pet/service/
 ### 5.6 单元测试与示例
 - [x] ToolManager测试
 - [x] CodeTools测试
-- [ ] FunctionCallingHandler测试
+- [x] FunctionCallingHandler测试
 - [ ] MCPService测试
 - [ ] ProjectContextCollector测试
 - [ ] 集成测试
 
-**进度**: 2/6 主要模块完成
+**进度**: 3/6 主要模块完成
 
 ---
 
 ## 总体进度
 
-**Phase 5 总体进度**: 14/28 主要模块完成
+**Phase 5 总体进度**: 18/28 主要模块完成
 
 **各模块完成情况**：
 - 5.1 工具管理器（ToolManager）: 5/5 ✅
 - 5.2 代码工具集（CodeTools）: 8/8 ✅
-- 5.3 Function Calling处理器（FunctionCallingHandler）: 0/4
+- 5.3 Function Calling处理器（FunctionCallingHandler）: 4/4 ✅
 - 5.4 MCP服务（MCPService）: 0/5
 - 5.5 项目上下文收集器（ProjectContextCollector）: 0/5
-- 5.6 单元测试与示例: 2/6
+- 5.6 单元测试与示例: 3/6

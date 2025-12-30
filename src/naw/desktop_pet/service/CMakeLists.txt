@@ -15,6 +15,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ResponseHandler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CodeTools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/FunctionCallingHandler.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -30,6 +31,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ResponseHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CodeTools.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/FunctionCallingHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -275,6 +277,17 @@ if(BUILD_TESTING)
     target_link_libraries(CodeToolsTest PRIVATE NAW_ServiceFoundation)
     target_include_directories(CodeToolsTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME CodeToolsTest COMMAND CodeToolsTest)
+
+    add_executable(FunctionCallingHandlerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/FunctionCallingHandlerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(FunctionCallingHandlerTest PRIVATE /GL-)
+        target_link_options(FunctionCallingHandlerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(FunctionCallingHandlerTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(FunctionCallingHandlerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME FunctionCallingHandlerTest COMMAND FunctionCallingHandlerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)
