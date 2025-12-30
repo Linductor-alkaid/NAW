@@ -1,8 +1,11 @@
 #include "naw/desktop_pet/service/FunctionCallingHandler.h"
 
 #include "naw/desktop_pet/service/ErrorHandler.h"
+#include "naw/desktop_pet/service/ToolCallContext.h"
 
+#include <algorithm>
 #include <chrono>
+#include <future>
 #include <sstream>
 #include <stdexcept>
 
@@ -132,14 +135,21 @@ bool FunctionCallingHandler::validateToolCall(const types::ToolCall& toolCall,
 
 // ========== 工具调用执行 ==========
 
-std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCalls(
-    const std::vector<types::ToolCall>& toolCalls,
-    ToolManager& toolManager
-) {
-    std::vector<FunctionCallResult> results;
-    results.reserve(toolCalls.size());
-
-    for (const auto& toolCall : toolCalls) {
+namespace {
+    /**
+     * @brief 执行单个工具调用的辅助函数
+     * @param toolCall 工具调用对象
+     * @param toolManager 工具管理器
+     * @param timeoutMs 超时时间（毫秒），0表示无超时限制
+     * @param context 工具调用上下文管理器（可选）
+     * @return 执行结果
+     */
+    FunctionCallResult executeSingleToolCall(
+        const types::ToolCall& toolCall,
+        ToolManager& toolManager,
+        int timeoutMs = 0,
+        ToolCallContext* context = nullptr
+    ) {
         FunctionCallResult result;
         result.toolCallId = toolCall.id;
         result.toolName = toolCall.function.name;
@@ -149,48 +159,102 @@ std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCalls(
 
         try {
             // 解析参数
-            auto arguments = parseToolCallArguments(toolCall);
+            auto arguments = FunctionCallingHandler::parseToolCallArguments(toolCall);
             if (!arguments.has_value()) {
                 auto endTime = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
                 result.executionTimeMs = static_cast<double>(duration.count());
                 result.success = false;
                 result.error = "Failed to parse tool call arguments";
-                results.push_back(result);
-                continue;
+                // 记录失败的调用
+                if (context) {
+                    context->recordToolCall(result, nlohmann::json::object());
+                }
+                return result;
+            }
+
+            // 检查缓存（如果有上下文且启用缓存）
+            if (context && context->isCacheEnabled()) {
+                auto cachedResult = context->getCachedResult(toolCall.function.name, arguments.value());
+                if (cachedResult.has_value()) {
+                    auto endTime = std::chrono::high_resolution_clock::now();
+                    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
+                    result.executionTimeMs = static_cast<double>(duration.count());
+                    result.success = true;
+                    result.result = cachedResult.value();
+                    // 记录缓存命中的调用（虽然是从缓存获取的）
+                    if (context) {
+                        context->recordToolCall(result, arguments.value());
+                    }
+                    return result;
+                }
             }
 
             // 验证工具调用
             ErrorInfo validationError;
-            if (!validateToolCall(toolCall, toolManager, &validationError)) {
+            if (!FunctionCallingHandler::validateToolCall(toolCall, toolManager, &validationError)) {
                 auto endTime = std::chrono::high_resolution_clock::now();
                 auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
                 result.executionTimeMs = static_cast<double>(duration.count());
                 result.success = false;
                 result.error = validationError.message;
-                results.push_back(result);
-                continue;
+                // 记录失败的调用
+                if (context) {
+                    context->recordToolCall(result, arguments.value());
+                }
+                return result;
             }
 
-            // 执行工具
+            // 执行工具（支持超时控制）
+            std::optional<nlohmann::json> toolResult;
             ErrorInfo executionError;
-            auto toolResult = toolManager.executeTool(
-                toolCall.function.name,
-                arguments.value(),
-                &executionError
-            );
+            bool timeoutOccurred = false;
+
+            if (timeoutMs > 0) {
+                // 使用异步执行并设置超时
+                auto future = std::async(std::launch::async, [&toolManager, &toolCall, &arguments, &executionError]() {
+                    return toolManager.executeTool(
+                        toolCall.function.name,
+                        arguments.value(),
+                        &executionError
+                    );
+                });
+
+                // 等待结果或超时
+                auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
+                if (status == std::future_status::timeout) {
+                    timeoutOccurred = true;
+                } else {
+                    toolResult = future.get();
+                }
+            } else {
+                // 无超时限制，直接执行
+                toolResult = toolManager.executeTool(
+                    toolCall.function.name,
+                    arguments.value(),
+                    &executionError
+                );
+            }
 
             // 计算执行时间
             auto endTime = std::chrono::high_resolution_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
             result.executionTimeMs = static_cast<double>(duration.count());
 
-            if (toolResult.has_value()) {
+            if (timeoutOccurred) {
+                result.success = false;
+                result.error = "Tool execution timeout after " + std::to_string(timeoutMs) + "ms";
+            } else if (toolResult.has_value()) {
                 result.success = true;
                 result.result = toolResult.value();
             } else {
                 result.success = false;
                 result.error = executionError.message.empty() ? "Tool execution failed" : executionError.message;
+            }
+
+            // 记录工具调用（成功后会自动缓存）
+            if (context) {
+                context->recordToolCall(result, arguments.value());
             }
         } catch (const std::exception& e) {
             // 捕获执行异常
@@ -199,6 +263,19 @@ std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCalls(
             result.executionTimeMs = static_cast<double>(duration.count());
             result.success = false;
             result.error = std::string("Exception: ") + e.what();
+            // 记录失败的调用
+            nlohmann::json arguments = nlohmann::json::object();
+            try {
+                auto parsedArgs = FunctionCallingHandler::parseToolCallArguments(toolCall);
+                if (parsedArgs.has_value()) {
+                    arguments = parsedArgs.value();
+                }
+            } catch (...) {
+                // 忽略解析错误
+            }
+            if (context) {
+                context->recordToolCall(result, arguments);
+            }
         } catch (...) {
             // 捕获未知异常
             auto endTime = std::chrono::high_resolution_clock::now();
@@ -206,9 +283,119 @@ std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCalls(
             result.executionTimeMs = static_cast<double>(duration.count());
             result.success = false;
             result.error = "Unknown exception occurred";
+            // 记录失败的调用
+            nlohmann::json arguments = nlohmann::json::object();
+            try {
+                auto parsedArgs = FunctionCallingHandler::parseToolCallArguments(toolCall);
+                if (parsedArgs.has_value()) {
+                    arguments = parsedArgs.value();
+                }
+            } catch (...) {
+                // 忽略解析错误
+            }
+            if (context) {
+                context->recordToolCall(result, arguments);
+            }
         }
 
-        results.push_back(result);
+        return result;
+    }
+}
+
+std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCalls(
+    const std::vector<types::ToolCall>& toolCalls,
+    ToolManager& toolManager,
+    int timeoutMs,
+    ToolCallContext* context
+) {
+    std::vector<FunctionCallResult> results;
+    results.reserve(toolCalls.size());
+
+    for (const auto& toolCall : toolCalls) {
+        results.push_back(executeSingleToolCall(toolCall, toolManager, timeoutMs, context));
+    }
+
+    return results;
+}
+
+std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCallsConcurrent(
+    const std::vector<types::ToolCall>& toolCalls,
+    ToolManager& toolManager,
+    size_t maxConcurrency,
+    int timeoutMs,
+    ToolCallContext* context
+) {
+    if (toolCalls.empty()) {
+        return {};
+    }
+
+    std::vector<FunctionCallResult> results;
+    results.reserve(toolCalls.size());
+
+    // 如果没有并发限制或工具调用数量较少，直接并发执行所有
+    if (maxConcurrency == 0 || toolCalls.size() <= maxConcurrency) {
+        std::vector<std::future<FunctionCallResult>> futures;
+        futures.reserve(toolCalls.size());
+
+        // 启动所有异步任务
+        for (const auto& toolCallRef : toolCalls) {
+            types::ToolCall toolCall = toolCallRef; // 按值复制
+            futures.push_back(std::async(
+                std::launch::async,
+                [&toolManager, toolCall, timeoutMs, context]() {
+                    return executeSingleToolCall(toolCall, toolManager, timeoutMs, context);
+                }
+            ));
+        }
+
+        // 收集所有结果（按顺序）
+        for (auto& future : futures) {
+            results.push_back(future.get());
+        }
+    } else {
+        // 有并发限制，分批执行
+        // 使用索引来保持结果顺序
+        struct FutureWithIndex {
+            std::future<FunctionCallResult> future;
+            size_t index;
+        };
+        
+        std::vector<FutureWithIndex> activeFutures;
+        activeFutures.reserve(maxConcurrency);
+        std::vector<FunctionCallResult> tempResults(toolCalls.size());
+        size_t nextIndex = 0;
+        size_t completedCount = 0;
+
+        while (completedCount < toolCalls.size()) {
+            // 启动新的任务直到达到最大并发数
+            while (activeFutures.size() < maxConcurrency && nextIndex < toolCalls.size()) {
+                types::ToolCall toolCall = toolCalls[nextIndex]; // 按值复制
+                size_t currentIndex = nextIndex;
+                activeFutures.push_back({
+                    std::async(
+                        std::launch::async,
+                        [&toolManager, toolCall, timeoutMs, context]() {
+                            return executeSingleToolCall(toolCall, toolManager, timeoutMs, context);
+                        }
+                    ),
+                    currentIndex
+                });
+                nextIndex++;
+            }
+
+            // 等待任意一个任务完成
+            if (!activeFutures.empty()) {
+                // 等待第一个任务完成（使用get()会阻塞直到完成）
+                // 这样可以确保至少有一个任务完成，避免忙等待
+                auto& firstFuture = activeFutures[0];
+                tempResults[firstFuture.index] = firstFuture.future.get();
+                activeFutures.erase(activeFutures.begin());
+                completedCount++;
+            }
+        }
+
+        // 按顺序收集结果
+        results.assign(tempResults.begin(), tempResults.end());
     }
 
     return results;
@@ -287,7 +474,8 @@ std::optional<types::ChatRequest> FunctionCallingHandler::processToolCalls(
     const types::ChatResponse& response,
     const types::ChatRequest& originalRequest,
     ToolManager& toolManager,
-    ErrorInfo* error
+    ErrorInfo* error,
+    ToolCallContext* context
 ) {
     // 检查是否有工具调用
     if (!hasToolCalls(response)) {
@@ -306,7 +494,7 @@ std::optional<types::ChatRequest> FunctionCallingHandler::processToolCalls(
     }
 
     // 执行工具调用
-    auto results = executeToolCalls(toolCalls, toolManager);
+    auto results = executeToolCalls(toolCalls, toolManager, 0, context);
 
     // 检查是否有执行失败的工具
     bool hasFailure = false;

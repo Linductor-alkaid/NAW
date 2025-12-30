@@ -6,6 +6,7 @@
 #include "naw/desktop_pet/service/types/RequestResponse.h"
 
 #include <chrono>
+#include <future>
 #include <optional>
 #include <string>
 #include <vector>
@@ -13,6 +14,9 @@
 #include "nlohmann/json.hpp"
 
 namespace naw::desktop_pet::service {
+
+// 前向声明
+class ToolCallContext;
 
 /**
  * @brief 工具调用执行结果
@@ -79,11 +83,32 @@ public:
      * @brief 批量执行工具调用
      * @param toolCalls 工具调用列表
      * @param toolManager 工具管理器
+     * @param timeoutMs 超时时间（毫秒），0表示无超时限制（可选，默认0）
+     * @param context 工具调用上下文管理器（可选，用于记录历史和缓存）
      * @return 执行结果列表
      */
     static std::vector<FunctionCallResult> executeToolCalls(
         const std::vector<types::ToolCall>& toolCalls,
-        ToolManager& toolManager
+        ToolManager& toolManager,
+        int timeoutMs = 0,
+        ToolCallContext* context = nullptr
+    );
+
+    /**
+     * @brief 并发执行工具调用
+     * @param toolCalls 工具调用列表
+     * @param toolManager 工具管理器
+     * @param maxConcurrency 最大并发数，0表示无限制（可选，默认0）
+     * @param timeoutMs 超时时间（毫秒），0表示无超时限制（可选，默认0）
+     * @param context 工具调用上下文管理器（可选，用于记录历史和缓存）
+     * @return 执行结果列表（结果顺序与输入顺序一致）
+     */
+    static std::vector<FunctionCallResult> executeToolCallsConcurrent(
+        const std::vector<types::ToolCall>& toolCalls,
+        ToolManager& toolManager,
+        size_t maxConcurrency = 0,
+        int timeoutMs = 0,
+        ToolCallContext* context = nullptr
     );
 
     // ========== 后续请求构建 ==========
@@ -121,13 +146,15 @@ public:
      * @param originalRequest 原始请求
      * @param toolManager 工具管理器
      * @param error 如果处理失败，输出错误信息
+     * @param context 工具调用上下文管理器（可选，用于记录历史和缓存）
      * @return 如果响应中包含工具调用且处理成功，返回后续请求；否则返回 std::nullopt
      */
     static std::optional<types::ChatRequest> processToolCalls(
         const types::ChatResponse& response,
         const types::ChatRequest& originalRequest,
         ToolManager& toolManager,
-        ErrorInfo* error = nullptr
+        ErrorInfo* error = nullptr,
+        ToolCallContext* context = nullptr
     );
 };
 

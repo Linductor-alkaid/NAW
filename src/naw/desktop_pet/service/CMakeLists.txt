@@ -16,6 +16,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CodeTools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/FunctionCallingHandler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ToolCallContext.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -32,6 +33,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CodeTools.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/FunctionCallingHandler.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolCallContext.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h

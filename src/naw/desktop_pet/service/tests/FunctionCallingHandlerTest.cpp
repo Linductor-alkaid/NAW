@@ -1,5 +1,6 @@
 #include "naw/desktop_pet/service/FunctionCallingHandler.h"
 #include "naw/desktop_pet/service/ToolManager.h"
+#include "naw/desktop_pet/service/ToolCallContext.h"
 #include "naw/desktop_pet/service/ErrorHandler.h"
 #include "naw/desktop_pet/service/types/RequestResponse.h"
 
@@ -565,6 +566,205 @@ int main() {
         CHECK_EQ(json["success"], false);
         CHECK_EQ(json["error"], "Tool execution failed");
         CHECK_TRUE(json.contains("error"));
+    }});
+
+    // ========== Timeout Control Tests ==========
+
+    tests.push_back({"executeToolCalls - timeout control - fast tool", []() {
+        ToolManager toolManager;
+        auto tool = createTestTool("fast_tool", "Fast tool");
+        toolManager.registerTool(tool);
+
+        auto toolCall = createToolCall("call_1", "fast_tool", nlohmann::json{{"value", "test"}});
+        auto results = FunctionCallingHandler::executeToolCalls({toolCall}, toolManager, 1000);
+
+        CHECK_EQ(results.size(), 1u);
+        CHECK_TRUE(results[0].success);
+    }});
+
+    tests.push_back({"executeToolCalls - timeout control - timeout occurs", []() {
+        ToolManager toolManager;
+        auto slowTool = createSlowTool("slow_tool", 2000); // 2 seconds
+        toolManager.registerTool(slowTool);
+
+        auto toolCall = createToolCall("call_1", "slow_tool", nlohmann::json{{"value", "test"}});
+        auto results = FunctionCallingHandler::executeToolCalls({toolCall}, toolManager, 100); // 100ms timeout
+
+        CHECK_EQ(results.size(), 1u);
+        CHECK_FALSE(results[0].success);
+        CHECK_TRUE(results[0].error.has_value());
+        CHECK_TRUE(results[0].error.value().find("timeout") != std::string::npos);
+    }});
+
+    // ========== Concurrent Execution Tests ==========
+
+    tests.push_back({"executeToolCallsConcurrent - concurrent execution - all succeed", []() {
+        ToolManager toolManager;
+        auto tool1 = createTestTool("tool1", "Tool 1");
+        auto tool2 = createTestTool("tool2", "Tool 2");
+        toolManager.registerTool(tool1);
+        toolManager.registerTool(tool2);
+
+        auto toolCall1 = createToolCall("call_1", "tool1", nlohmann::json{{"value", "test1"}});
+        auto toolCall2 = createToolCall("call_2", "tool2", nlohmann::json{{"value", "test2"}});
+        
+        auto results = FunctionCallingHandler::executeToolCallsConcurrent(
+            {toolCall1, toolCall2},
+            toolManager,
+            0, // no concurrency limit
+            0  // no timeout
+        );
+
+        CHECK_EQ(results.size(), 2u);
+        CHECK_TRUE(results[0].success);
+        CHECK_TRUE(results[1].success);
+        CHECK_EQ(results[0].toolCallId, "call_1");
+        CHECK_EQ(results[1].toolCallId, "call_2");
+    }});
+
+    tests.push_back({"executeToolCallsConcurrent - concurrency limit", []() {
+        ToolManager toolManager;
+        auto tool = createTestTool("test_tool", "Test tool");
+        toolManager.registerTool(tool);
+
+        std::vector<types::ToolCall> toolCalls;
+        for (int i = 0; i < 5; ++i) {
+            toolCalls.push_back(createToolCall(
+                "call_" + std::to_string(i),
+                "test_tool",
+                nlohmann::json{{"value", std::to_string(i)}}  // Convert to string to match schema
+            ));
+        }
+
+        auto results = FunctionCallingHandler::executeToolCallsConcurrent(
+            toolCalls,
+            toolManager,
+            2, // max 2 concurrent
+            0  // no timeout
+        );
+
+        CHECK_EQ(results.size(), 5u);
+        for (const auto& result : results) {
+            CHECK_TRUE(result.success);
+        }
+    }});
+
+    // ========== ToolCallContext Tests ==========
+
+    tests.push_back({"ToolCallContext - record and retrieve history", []() {
+        ToolCallContext context(false); // disable cache for this test
+
+        FunctionCallResult result;
+        result.toolCallId = "call_1";
+        result.toolName = "test_tool";
+        result.success = true;
+        result.result = nlohmann::json{{"output", "success"}};
+        result.executionTimeMs = 10.0;
+
+        nlohmann::json arguments = nlohmann::json{{"input", "test"}};
+        context.recordToolCall(result, arguments);
+
+        auto history = context.getHistory();
+        CHECK_EQ(history.size(), 1u);
+        CHECK_EQ(history[0].toolCallId, "call_1");
+        CHECK_EQ(history[0].toolName, "test_tool");
+        CHECK_TRUE(history[0].success);
+    }});
+
+    tests.push_back({"ToolCallContext - call chain tracking", []() {
+        ToolCallContext context(false);
+
+        std::string convId = "conv_1";
+        context.startCallChain(convId);
+
+        FunctionCallResult result;
+        result.toolCallId = "call_1";
+        result.toolName = "test_tool";
+        result.success = true;
+        result.result = nlohmann::json{{"output", "success"}};
+        result.executionTimeMs = 10.0;
+
+        context.recordToolCall(result, nlohmann::json{{"input", "test"}});
+        context.endCallChain(convId);
+
+        auto chain = context.getCallChain(convId);
+        CHECK_TRUE(chain.has_value());
+        CHECK_EQ(chain.value().conversationId, convId);
+        CHECK_EQ(chain.value().toolCalls.size(), 1u);
+    }});
+
+    tests.push_back({"ToolCallContext - result caching", []() {
+        ToolCallContext context(true, 60000); // enable cache, 60s TTL
+
+        // First call - should execute
+        FunctionCallResult result1;
+        result1.toolCallId = "call_1";
+        result1.toolName = "test_tool";
+        result1.success = true;
+        result1.result = nlohmann::json{{"output", "cached"}};
+        result1.executionTimeMs = 10.0;
+
+        nlohmann::json arguments = nlohmann::json{{"input", "test"}};
+        context.recordToolCall(result1, arguments);
+
+        // Check cache
+        auto cached = context.getCachedResult("test_tool", arguments);
+        CHECK_TRUE(cached.has_value());
+        CHECK_EQ(cached.value()["output"], "cached");
+    }});
+
+    tests.push_back({"executeToolCalls - with context - cache hit", []() {
+        ToolManager toolManager;
+        auto tool = createTestTool("test_tool", "Test tool");
+        toolManager.registerTool(tool);
+
+        ToolCallContext context(true, 60000);
+
+        // First call - should execute and cache
+        auto toolCall = createToolCall("call_1", "test_tool", nlohmann::json{{"value", "test"}});
+        auto results1 = FunctionCallingHandler::executeToolCalls({toolCall}, toolManager, 0, &context);
+
+        CHECK_EQ(results1.size(), 1u);
+        CHECK_TRUE(results1[0].success);
+
+        // Second call with same arguments - should hit cache
+        auto toolCall2 = createToolCall("call_2", "test_tool", nlohmann::json{{"value", "test"}});
+        auto results2 = FunctionCallingHandler::executeToolCalls({toolCall2}, toolManager, 0, &context);
+
+        CHECK_EQ(results2.size(), 1u);
+        CHECK_TRUE(results2[0].success);
+        CHECK_EQ(results2[0].toolCallId, "call_2"); // Different call ID but same result
+
+        // Verify history
+        auto history = context.getHistory();
+        CHECK_EQ(history.size(), 2u); // Both calls should be recorded
+    }});
+
+    tests.push_back({"processToolCalls - with context", []() {
+        ToolManager toolManager;
+        auto tool = createTestTool("test_tool", "Test tool");
+        toolManager.registerTool(tool);
+
+        ToolCallContext context(false); // disable cache for simplicity
+
+        auto originalRequest = createTestRequest();
+        auto toolCall = createToolCall("call_1", "test_tool", nlohmann::json{{"value", "test"}});
+        auto response = createResponseWithToolCalls({toolCall});
+
+        auto followUp = FunctionCallingHandler::processToolCalls(
+            response,
+            originalRequest,
+            toolManager,
+            nullptr,
+            &context
+        );
+
+        CHECK_TRUE(followUp.has_value());
+        
+        // Verify history was recorded
+        auto history = context.getHistory();
+        CHECK_EQ(history.size(), 1u);
+        CHECK_EQ(history[0].toolCallId, "call_1");
     }});
 
     return mini_test::run(tests);
