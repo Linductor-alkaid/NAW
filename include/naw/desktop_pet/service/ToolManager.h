@@ -155,6 +155,17 @@ public:
     std::vector<std::string> getToolNames() const;
 
     /**
+     * @brief 获取所有工具的定义（转换为OpenAI Function Calling格式）
+     * 
+     * 将ToolManager中的所有工具转换为OpenAI兼容的Function Calling格式，
+     * 用于填充ChatRequest.tools字段，供LLM使用。
+     * 
+     * @return OpenAI Function Calling格式的工具列表（std::vector<nlohmann::json>）
+     *         每个元素格式：{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
+     */
+    std::vector<nlohmann::json> getToolsForAPI() const;
+
+    /**
      * @brief 获取已注册工具的数量
      * @return 工具数量
      */

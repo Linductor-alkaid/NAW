@@ -215,6 +215,31 @@ std::vector<std::string> ToolManager::getToolNames() const {
     return result;
 }
 
+std::vector<nlohmann::json> ToolManager::getToolsForAPI() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<nlohmann::json> result;
+    result.reserve(m_tools.size());
+    
+    for (const auto& pair : m_tools) {
+        const auto& tool = pair.second;
+        
+        // 转换为OpenAI Function Calling格式
+        // 格式参考：https://docs.siliconflow.cn/cn/userguide/guides/function-calling
+        nlohmann::json toolJson = nlohmann::json{
+            {"type", "function"},
+            {"function", {
+                {"name", tool.name},
+                {"description", tool.description},
+                {"parameters", tool.parametersSchema}
+            }}
+        };
+        
+        result.push_back(std::move(toolJson));
+    }
+    
+    return result;
+}
+
 size_t ToolManager::getToolCount() const {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_tools.size();

@@ -627,196 +627,113 @@ src/naw/desktop_pet/service/
 
 ---
 
-## 5.4 MCP服务（MCPService）
+## 5.4 工具与LLM集成（Tool-LLM Integration）
 
 ### 5.4.1 任务概述
-实现 Model Context Protocol (MCP) 协议，提供标准化的工具接口。MCP是一个开放标准，用于将语言模型与外部工具和数据源集成。本模块实现MCP Server，将ToolManager中的工具暴露为MCP工具。
+实现ToolManager中的工具与LLM的集成，将工具定义转换为OpenAI兼容的Function Calling格式，供硅基流动等LLM服务使用。本模块负责工具格式转换和ChatRequest构建，使LLM能够识别和调用ToolManager中注册的工具。
+
+> **注意**：根据硅基流动官方文档（https://docs.siliconflow.cn/cn/userguide/guides/function-calling），
+> 硅基流动支持OpenAI兼容的Function Calling格式，但不支持MCP协议。
+> 因此本模块直接实现Function Calling格式转换，而非MCP Server。
 
 ### 5.4.2 文件结构（建议）
 ```
 include/naw/desktop_pet/service/
-└── MCPService.h
+└── ToolManager.h  (添加 getToolsForAPI() 方法)
 
 src/naw/desktop_pet/service/
-└── MCPService.cpp
+└── ToolManager.cpp  (实现 getToolsForAPI() 方法)
 ```
+
+> **说明**：工具与LLM集成功能主要在ToolManager中实现，无需单独的MCPService模块。
 
 ### 5.4.3 详细任务清单
 
-#### 5.4.3.1 MCP协议基础
-- [ ] **JSON-RPC消息格式**
-  - [ ] 定义 `MCPMessage` 结构体
-    - [ ] `jsonrpc`（版本，固定为 `"2.0"`）
-    - [ ] `id`（消息ID，请求/响应匹配）
-    - [ ] `method`（方法名，请求时使用）
-    - [ ] `params`（参数，JSON对象）
-    - [ ] `result`（结果，响应时使用）
-    - [ ] `error`（错误，响应时使用）
-  - [ ] 实现消息序列化（`toJson()` 方法）
-  - [ ] 实现消息反序列化（`fromJson()` 方法）
-
-- [ ] **消息序列化/反序列化**
-  - [ ] 实现 `serializeMessage(const MCPMessage& message)` 方法
-    - [ ] 将 `MCPMessage` 转换为 `nlohmann::json`
-    - [ ] 返回JSON字符串（`json.dump()`）
-  - [ ] 实现 `deserializeMessage(const std::string& jsonStr)` 方法
-    - [ ] 解析JSON字符串（`nlohmann::json::parse()`）
-    - [ ] 转换为 `MCPMessage` 对象
-    - [ ] 处理JSON解析错误
-    - [ ] 返回 `std::optional<MCPMessage>`
-
-- [ ] **消息ID生成**
-  - [ ] 实现消息ID生成（UUID或递增数字）
-  - [ ] 确保消息ID唯一性
-  - [ ] 支持请求/响应ID匹配
-
-- [ ] **错误处理**
-  - [ ] 定义MCP错误码（参考JSON-RPC标准）
-    - [ ] `-32700`：Parse error（JSON解析错误）
-    - [ ] `-32600`：Invalid Request（无效请求）
-    - [ ] `-32601`：Method not found（方法不存在）
-    - [ ] `-32602`：Invalid params（无效参数）
-    - [ ] `-32603`：Internal error（内部错误）
-  - [ ] 实现错误消息构建（`buildErrorResponse(id, code, message)`）
+#### 5.4.3.1 工具格式转换（ToolManager扩展）
+- [x] **ToolDefinition转OpenAI Function Calling格式**
+  - [x] 在 `ToolManager` 中实现 `getToolsForAPI()` 方法
+    - [x] 获取所有已注册的工具（`getAllTools()`）
+    - [x] 将每个 `ToolDefinition` 转换为OpenAI Function Calling格式：
+      - [x] 创建 `{"type": "function", "function": {...}}` 对象
+      - [x] 设置 `function.name = tool.name`
+      - [x] 设置 `function.description = tool.description`
+      - [x] 设置 `function.parameters = tool.parametersSchema`
+    - [x] 返回 `std::vector<nlohmann::json>`（工具列表）
+  - [x] 确保格式符合OpenAI Function Calling规范（参考硅基流动文档）
+  - [x] 线程安全（使用mutex保护）
 
 **验收标准**：
-- 单测验证：消息序列化/反序列化正确。
-- 单测验证：错误消息格式正确。
-- 单测验证：消息ID生成唯一。
+- [x] 单测验证：工具格式转换正确（符合OpenAI格式）。
+- [x] 单测验证：所有工具都能正确转换。
+- [x] 单测验证：线程安全（并发调用无竞态条件）。
 
-#### 5.4.3.2 MCP Server实现
-- [ ] **Server初始化**
-  - [ ] 实现 `initialize(const std::string& projectRoot)` 方法
-    - [ ] 设置项目根路径
-    - [ ] 初始化 `ToolManager`（如果未提供）
-    - [ ] 注册标准工具（调用 `initializeStandardTools()`）
-  - [ ] 实现 `initializeStandardTools()` 方法
-    - [ ] 调用 `CodeTools::registerAllTools()` 注册代码工具
-    - [ ] 转换为MCP工具格式
-
-- [ ] **请求处理**
-  - [ ] 实现 `handleRequest(const MCPMessage& request)` 方法
-    - [ ] 解析请求方法名（`request.method`）
-    - [ ] 路由到相应处理方法：
-      - [ ] `"tools/list"` -> `handleListTools(request)`
-      - [ ] `"tools/call"` -> `handleCallTool(request)`
-      - [ ] 其他方法 -> 返回方法不存在错误
-    - [ ] 构建响应消息
-    - [ ] 返回响应（`nlohmann::json`）
-  - [ ] 实现请求验证（检查必需字段、参数格式等）
-
-- [ ] **工具列表接口**
-  - [ ] 实现 `handleListTools(const MCPMessage& request)` 方法
-    - [ ] 获取所有MCP工具（从 `m_tools` 或 `ToolManager`）
-    - [ ] 转换为MCP工具列表格式
-    - [ ] 构建响应消息
-    - [ ] 返回 `{"tools": [...]}`
-  - [ ] 实现 `listTools()` 公共接口（返回JSON格式的工具列表）
-
-- [ ] **工具调用接口**
-  - [ ] 实现 `handleCallTool(const MCPMessage& request)` 方法
-    - [ ] 从请求参数提取工具名称和参数（`params.name`、`params.arguments`）
-    - [ ] 调用 `callTool(name, arguments)` 执行工具
-    - [ ] 构建响应消息
-    - [ ] 返回工具执行结果
-  - [ ] 实现 `callTool(const std::string& toolName, const nlohmann::json& arguments)` 方法
-    - [ ] 查找MCP工具（从 `m_tools` 查找）
-    - [ ] 调用工具处理器（`tool.handler(arguments)`）
-    - [ ] 捕获执行异常
-    - [ ] 返回结果或错误
-
-- [ ] **错误处理**
-  - [ ] 实现统一的错误处理逻辑
-    - [ ] 捕获所有异常
-    - [ ] 转换为MCP错误响应
-    - [ ] 记录错误日志
-  - [ ] 实现参数验证错误处理
-  - [ ] 实现工具不存在错误处理
-  - [ ] 实现工具执行错误处理
-
-**验收标准**：
-- 单测验证：工具列表接口返回正确格式。
-- 单测验证：工具调用接口执行正确。
-- 单测验证：错误处理正确（方法不存在、参数错误等）。
-
-#### 5.4.3.3 MCP工具注册
-- [ ] **从ToolManager转换**
-  - [ ] 实现 `convertToolManagerToMCP(ToolManager& toolManager)` 方法
-    - [ ] 获取 `ToolManager` 中的所有工具（`getAllTools()`）
-    - [ ] 对每个工具转换为MCP工具格式
-    - [ ] 设置MCP工具的处理器（调用 `ToolManager::executeTool()`）
-    - [ ] 注册到MCP Server
-  - [ ] 实现工具格式转换逻辑
-    - [ ] `ToolDefinition.name` -> `MCPTool.name`
-    - [ ] `ToolDefinition.description` -> `MCPTool.description`
-    - [ ] `ToolDefinition.parametersSchema` -> `MCPTool.inputSchema`
-
-- [ ] **MCP工具格式适配**
-  - [ ] 定义 `MCPTool` 结构体
-    - [ ] `name`（工具名称）
-    - [ ] `description`（工具描述）
-    - [ ] `inputSchema`（输入参数Schema，JSON Schema格式）
-    - [ ] `handler`（工具处理器函数）
-  - [ ] 实现 `MCPTool` 与 `ToolDefinition` 的转换
-  - [ ] 确保Schema格式兼容（JSON Schema标准）
-
-- [ ] **工具注册接口**
-  - [ ] 实现 `registerTool(const MCPTool& tool)` 方法
-    - [ ] 验证工具定义有效性
-    - [ ] 检查工具名称是否已存在
-    - [ ] 存储到 `m_tools` 向量或映射
-    - [ ] 线程安全（使用 mutex 保护）
-  - [ ] 实现 `unregisterTool(const std::string& toolName)` 方法
-  - [ ] 实现 `getTool(const std::string& toolName)` 方法
-
-- [ ] **工具列表获取**
-  - [ ] 实现 `getAvailableTools()` 方法
-    - [ ] 返回所有已注册的MCP工具列表
-    - [ ] 转换为MCP协议格式（`{"tools": [...]}`）
-  - [ ] 实现工具过滤（按权限、按类型等，可选）
-
-**验收标准**：
-- 单测验证：ToolManager工具转换为MCP工具正确。
-- 单测验证：MCP工具注册和查询正确。
-- 单测验证：工具格式兼容性正确。
-
-#### 5.4.3.4 MCP与LLM集成
-- [ ] **MCP工具转Function Calling格式**
-  - [ ] 实现 `convertMCPToolsToFunctions(const std::vector<MCPTool>& mcpTools)` 方法
-    - [ ] 遍历所有MCP工具
-    - [ ] 对每个工具转换为Function Calling格式：
-      - [ ] 创建 `{"type": "function", "function": {...}}` 对象
-      - [ ] 设置 `function.name = tool.name`
-      - [ ] 设置 `function.description = tool.description`
-      - [ ] 设置 `function.parameters = tool.inputSchema`
-    - [ ] 返回 `std::vector<nlohmann::json>`（工具列表）
-  - [ ] 确保格式符合OpenAI Function Calling规范
-
-- [ ] **在API请求中包含MCP工具**
-  - [ ] 实现 `buildRequestWithMCPTools(const std::vector<ChatMessage>& messages, const std::vector<MCPTool>& tools)` 方法
-    - [ ] 转换MCP工具为Function Calling格式
-    - [ ] 创建 `ChatRequest` 对象
-    - [ ] 设置 `request.messages = messages`
-    - [ ] 设置 `request.tools = convertedTools`
-    - [ ] 设置 `request.toolChoice = "auto"`（或从配置读取）
-    - [ ] 返回 `ChatRequest`
+#### 5.4.3.2 ChatRequest工具填充
+- [ ] **构建包含工具的ChatRequest**
+  - [ ] 实现辅助函数或方法，将ToolManager的工具填充到ChatRequest
+    - [ ] 调用 `ToolManager::getToolsForAPI()` 获取工具列表
+    - [ ] 设置 `ChatRequest.tools = toolList`
+    - [ ] 设置 `ChatRequest.toolChoice = "auto"`（或从配置读取）
+    - [ ] 保持其他请求参数不变
   - [ ] 实现工具选择策略（`auto`、`none`、特定工具名）
+    - [ ] `auto`：让LLM自动决定是否调用工具
+    - [ ] `none`：不调用任何工具
+    - [ ] 特定工具名：强制调用指定工具
+
+- [ ] **工具过滤（可选）**
+  - [ ] 实现按权限级别过滤工具（只暴露Public工具给LLM）
+  - [ ] 实现按工具名称前缀过滤
+  - [ ] 实现自定义工具过滤函数
+
+- [ ] **工具列表管理**
+  - [ ] 支持动态添加/移除工具到请求中
+  - [ ] 支持工具列表缓存（避免重复转换）
+
+**验收标准**：
+- 单测验证：ChatRequest工具列表填充正确。
+- 单测验证：工具选择策略正确（auto/none/特定工具）。
+- 单测验证：工具过滤功能正确（如果实现）。
+
+#### 5.4.3.3 工具调用流程集成
+- [ ] **完整的Function Calling流程**
+  - [ ] 在ContextManager或RequestManager中集成工具列表填充
+    - [ ] 构建ChatRequest时，自动从ToolManager获取工具列表
+    - [ ] 将工具列表填充到 `request.tools` 字段
+  - [ ] 确保工具列表在每次请求中都正确传递
+  - [ ] 支持工具列表的动态更新（工具注册/注销后自动更新）
 
 - [ ] **工具调用结果处理**
-  - [ ] 实现 `processToolCallResults(const std::vector<FunctionCallResult>& results)` 方法
-    - [ ] 将 `FunctionCallResult` 转换为MCP响应格式（可选）
-    - [ ] 处理工具调用结果
-    - [ ] 返回处理后的结果（用于后续LLM请求）
+  - [ ] 使用已有的 `FunctionCallingHandler::processToolCalls()` 处理工具调用
+  - [ ] 确保工具调用结果正确返回给LLM
+  - [ ] 支持多轮工具调用（工具调用 -> 工具结果 -> 再次工具调用）
 
-- [ ] **MCP工具与LLM工具的统一接口**
-  - [ ] 实现统一的工具接口（抽象 `ToolProvider` 接口，可选）
-  - [ ] `ToolManager` 和 `MCPService` 都实现该接口
-  - [ ] 简化LLM集成的代码
+- [ ] **错误处理和日志**
+  - [ ] 记录工具列表填充日志
+  - [ ] 记录工具调用统计（哪些工具被调用、调用频率等）
+  - [ ] 处理工具格式转换错误
 
 **验收标准**：
-- 单测验证：MCP工具转换为Function Calling格式正确。
-- 单测验证：API请求构建正确（包含工具列表）。
-- 单测验证：工具调用结果处理正确。
+- 单测验证：工具列表自动填充到ChatRequest。
+- 单测验证：完整的Function Calling流程正确（请求 -> LLM响应 -> 工具执行 -> 后续请求）。
+- 单测验证：多轮工具调用流程正确。
+
+#### 5.4.3.4 使用示例和文档
+- [ ] **使用示例代码**
+  - [ ] 提供完整的Function Calling使用示例
+    - [ ] 注册工具到ToolManager
+    - [ ] 构建包含工具的ChatRequest
+    - [ ] 发送请求到LLM（硅基流动）
+    - [ ] 处理LLM返回的工具调用
+    - [ ] 执行工具并构建后续请求
+  - [ ] 示例代码应包含错误处理
+
+- [ ] **文档说明**
+  - [ ] 说明如何将ToolManager的工具用于LLM Function Calling
+  - [ ] 说明硅基流动Function Calling格式要求
+  - [ ] 提供工具定义的最佳实践（描述、参数Schema等）
+
+**验收标准**：
+- 示例代码可以正常运行。
+- 文档清晰易懂。
 
 ---
 
@@ -987,11 +904,11 @@ src/naw/desktop_pet/service/
   - [x] 完整流程测试（`processToolCalls` 方法）
   - [x] 错误处理测试（工具不存在、参数验证失败、执行失败等）
 
-- [ ] **MCPService测试**
-  - [ ] MCP协议测试（消息序列化/反序列化）
-  - [ ] MCP Server测试（工具列表、工具调用）
-  - [ ] MCP工具转换测试（ToolManager -> MCP格式）
-  - [ ] MCP与LLM集成测试（Function Calling格式转换）
+- [ ] **工具与LLM集成测试**
+  - [ ] 工具格式转换测试（ToolDefinition -> OpenAI格式）
+  - [ ] ChatRequest工具填充测试
+  - [ ] 完整Function Calling流程测试（请求 -> 工具执行 -> 后续请求）
+  - [ ] 硅基流动API兼容性测试
 
 - [ ] **ProjectContextCollector测试**
   - [ ] 项目结构分析测试（目录扫描、CMake解析）
@@ -1009,10 +926,10 @@ src/naw/desktop_pet/service/
   - [ ] 多轮工具调用流程
   - [ ] 工具调用错误处理
 
-- [ ] **MCPService + ToolManager 集成测试**
-  - [ ] MCP工具注册和查询
-  - [ ] MCP工具调用执行
-  - [ ] MCP与Function Calling格式转换
+- [ ] **ToolManager + LLM集成测试**
+  - [ ] 工具列表自动填充到ChatRequest
+  - [ ] 工具调用完整流程（LLM请求 -> 工具执行 -> LLM响应）
+  - [ ] 多轮工具调用流程
 
 - [ ] **ProjectContextCollector + ContextManager 集成测试**
   - [ ] 项目上下文收集和集成到对话上下文
@@ -1041,10 +958,10 @@ src/naw/desktop_pet/service/
 2. 集成 `ToolManager` 实现工具调用流程。
 3. 实现后续请求构建。
 
-### 第四阶段：MCP服务（5.4）
-1. 完成 `MCPService`，实现MCP协议。
-2. 集成 `ToolManager` 转换为MCP工具。
-3. 实现MCP与LLM集成。
+### 第四阶段：工具与LLM集成（5.4）
+1. 在 `ToolManager` 中实现 `getToolsForAPI()` 方法，将工具转换为OpenAI Function Calling格式。
+2. 实现ChatRequest工具填充功能。
+3. 集成到ContextManager或RequestManager，实现完整的Function Calling流程。
 
 ### 第五阶段：项目上下文收集器（5.5）
 1. 完成 `ProjectContextCollector`。
@@ -1089,14 +1006,14 @@ src/naw/desktop_pet/service/
 
 **进度**: 4/4 主要模块完成 ✅（包含所有可选功能）
 
-### 5.4 MCP服务（MCPService）
-- [ ] MCP协议基础
-- [ ] MCP Server实现
-- [ ] MCP工具注册
-- [ ] MCP与LLM集成
+### 5.4 工具与LLM集成（Tool-LLM Integration）
+- [x] 工具格式转换（ToolManager扩展 - getToolsForAPI方法）
+- [ ] ChatRequest工具填充
+- [ ] 工具调用流程集成
+- [ ] 使用示例和文档
 - [ ] 单元测试
 
-**进度**: 0/5 主要模块完成
+**进度**: 1/4 主要模块完成
 
 ### 5.5 项目上下文收集器（ProjectContextCollector）
 - [ ] 项目结构分析
@@ -1121,12 +1038,15 @@ src/naw/desktop_pet/service/
 
 ## 总体进度
 
-**Phase 5 总体进度**: 18/28 主要模块完成
+**Phase 5 总体进度**: 19/27 主要模块完成
 
 **各模块完成情况**：
 - 5.1 工具管理器（ToolManager）: 5/5 ✅
 - 5.2 代码工具集（CodeTools）: 8/8 ✅
 - 5.3 Function Calling处理器（FunctionCallingHandler）: 4/4 ✅
-- 5.4 MCP服务（MCPService）: 0/5
+- 5.4 工具与LLM集成（Tool-LLM Integration）: 1/4
 - 5.5 项目上下文收集器（ProjectContextCollector）: 0/5
 - 5.6 单元测试与示例: 3/6
+
+> **注意**：5.4节已从"MCP服务"调整为"工具与LLM集成"，直接实现OpenAI Function Calling格式转换，
+> 适配硅基流动等支持OpenAI兼容Function Calling的LLM服务提供商。
