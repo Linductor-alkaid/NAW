@@ -238,6 +238,17 @@ if(BUILD_TESTING)
     target_link_libraries(ResponseHandlerTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient)
     target_include_directories(ResponseHandlerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME ResponseHandlerTest COMMAND ResponseHandlerTest)
+
+    add_executable(Phase4IntegrationTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/Phase4IntegrationTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(Phase4IntegrationTest PRIVATE /GL-)
+        target_link_options(Phase4IntegrationTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(Phase4IntegrationTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient NAW_ServiceUtils)
+    target_include_directories(Phase4IntegrationTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME Phase4IntegrationTest COMMAND Phase4IntegrationTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)
