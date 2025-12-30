@@ -14,7 +14,7 @@
 
 ### 目标
 - 实现 **工具管理器（ToolManager）**：管理所有可用工具，支持工具注册、查询和执行，为 Function Calling 提供基础支持。
-- 实现 **代码工具集（CodeTools）**：提供代码开发相关的标准工具（read_file、list_files、search_code、get_project_structure、analyze_code等）。
+- 实现 **代码工具集（CodeTools）**：提供代码开发相关的标准工具（read_file、write_file、list_files、search_code、get_project_structure、analyze_code等）。
 - 实现 **Function Calling处理器（FunctionCallingHandler）**：处理LLM返回的工具调用请求，执行工具并构建后续请求。
 - 实现 **MCP服务（MCPService）**：实现 Model Context Protocol 协议，提供标准化的工具接口和项目上下文访问。
 - 实现 **项目上下文收集器（ProjectContextCollector）**：分析项目结构，收集项目信息，为LLM提供项目上下文。
@@ -195,42 +195,42 @@ src/naw/desktop_pet/service/
 ### 5.2.3 详细任务清单
 
 #### 5.2.3.1 read_file工具实现
-- [ ] **文件读取基础功能**
-  - [ ] 实现文件读取逻辑（使用 `std::ifstream` 或平台API）
-  - [ ] 支持文本文件读取（UTF-8编码）
-  - [ ] 处理文件不存在错误
-  - [ ] 处理文件读取权限错误
-  - [ ] 处理文件过大错误（设置最大文件大小限制）
+- [x] **文件读取基础功能**
+  - [x] 实现文件读取逻辑（使用 `std::ifstream` 或平台API）
+  - [x] 支持文本文件读取（UTF-8编码）
+  - [x] 处理文件不存在错误
+  - [x] 处理文件读取权限错误
+  - [x] 处理文件过大错误（设置最大文件大小限制）
 
-- [ ] **行范围支持**
-  - [ ] 实现行范围参数解析（`startLine`、`endLine`）
-  - [ ] 实现行范围提取逻辑
-    - [ ] 支持单行提取（`startLine == endLine`）
-    - [ ] 支持多行提取（`startLine < endLine`）
-    - [ ] 处理边界情况（超出文件范围、负数等）
-  - [ ] 返回行范围内容（包含行号信息，可选）
+- [x] **行范围支持**
+  - [x] 实现行范围参数解析（`startLine`、`endLine`）
+  - [x] 实现行范围提取逻辑
+    - [x] 支持单行提取（`startLine == endLine`）
+    - [x] 支持多行提取（`startLine < endLine`）
+    - [x] 处理边界情况（超出文件范围、负数等）
+  - [x] 返回行范围内容（包含行号信息，可选）
 
-- [ ] **错误处理**
-  - [ ] 文件不存在时返回错误信息
-  - [ ] 文件读取失败时返回错误信息
-  - [ ] 行范围无效时返回错误信息
-  - [ ] 返回标准错误格式（JSON格式）
+- [x] **错误处理**
+  - [x] 文件不存在时返回错误信息
+  - [x] 文件读取失败时返回错误信息
+  - [x] 行范围无效时返回错误信息
+  - [x] 返回标准错误格式（JSON格式）
 
-- [ ] **返回结果格式**
-  - [ ] 定义返回JSON结构
-    - [ ] `content`（文件内容或行范围内容）
-    - [ ] `path`（文件路径）
-    - [ ] `line_count`（总行数）
-    - [ ] `start_line`（起始行，如果指定了行范围）
-    - [ ] `end_line`（结束行，如果指定了行范围）
+- [x] **返回结果格式**
+  - [x] 定义返回JSON结构
+    - [x] `content`（文件内容或行范围内容）
+    - [x] `path`（文件路径）
+    - [x] `line_count`（总行数）
+    - [x] `start_line`（起始行，如果指定了行范围）
+    - [x] `end_line`（结束行，如果指定了行范围）
 
-- [ ] **工具注册**
-  - [ ] 实现 `registerReadFileTool(ToolManager& toolManager)` 静态方法
-  - [ ] 定义工具参数Schema
-    - [ ] `path`（必需，文件路径）
-    - [ ] `start_line`（可选，起始行号，从1开始）
-    - [ ] `end_line`（可选，结束行号）
-  - [ ] 注册到 `ToolManager`
+- [x] **工具注册**
+  - [x] 实现 `registerReadFileTool(ToolManager& toolManager)` 静态方法
+  - [x] 定义工具参数Schema
+    - [x] `path`（必需，文件路径）
+    - [x] `start_line`（可选，起始行号，从1开始）
+    - [x] `end_line`（可选，结束行号）
+  - [x] 注册到 `ToolManager`
 
 **验收标准**：
 - 单测验证：读取完整文件成功。
@@ -239,38 +239,38 @@ src/naw/desktop_pet/service/
 - 单测验证：无效行范围时返回错误。
 
 #### 5.2.3.2 list_files工具实现
-- [ ] **目录遍历**
-  - [ ] 实现目录遍历逻辑（使用 `std::filesystem`）
-  - [ ] 支持相对路径和绝对路径
-  - [ ] 处理目录不存在错误
-  - [ ] 处理目录访问权限错误
+- [x] **目录遍历**
+  - [x] 实现目录遍历逻辑（使用 `std::filesystem`）
+  - [x] 支持相对路径和绝对路径
+  - [x] 处理目录不存在错误
+  - [x] 处理目录访问权限错误
 
-- [ ] **文件过滤**
-  - [ ] 实现文件模式匹配（如 `*.cpp`、`*.h`）
-  - [ ] 支持通配符匹配（`*`、`?` 等）
-  - [ ] 支持正则表达式匹配（可选）
-  - [ ] 支持文件类型过滤（通过扩展名）
+- [x] **文件过滤**
+  - [x] 实现文件模式匹配（如 `*.cpp`、`*.h`）
+  - [x] 支持通配符匹配（`*`、`?` 等）
+  - [x] 支持正则表达式匹配（可选）
+  - [x] 支持文件类型过滤（通过扩展名）
 
-- [ ] **递归选项**
-  - [ ] 实现递归遍历参数（`recursive` 布尔值）
-  - [ ] 支持单层遍历（非递归）
-  - [ ] 支持递归遍历（遍历所有子目录）
-  - [ ] 处理循环链接（避免无限递归）
+- [x] **递归选项**
+  - [x] 实现递归遍历参数（`recursive` 布尔值）
+  - [x] 支持单层遍历（非递归）
+  - [x] 支持递归遍历（遍历所有子目录）
+  - [x] 处理循环链接（避免无限递归）
 
-- [ ] **返回结果格式**
-  - [ ] 定义返回JSON结构
-    - [ ] `files`（文件路径列表）
-    - [ ] `directories`（目录路径列表，可选）
-    - [ ] `count`（文件数量）
-    - [ ] `total_size`（总大小，字节，可选）
+- [x] **返回结果格式**
+  - [x] 定义返回JSON结构
+    - [x] `files`（文件路径列表）
+    - [x] `directories`（目录路径列表，可选）
+    - [x] `count`（文件数量）
+    - [x] `total_size`（总大小，字节，可选）
 
-- [ ] **工具注册**
-  - [ ] 实现 `registerListFilesTool(ToolManager& toolManager)` 静态方法
-  - [ ] 定义工具参数Schema
-    - [ ] `directory`（可选，目录路径，默认为当前目录）
-    - [ ] `pattern`（可选，文件匹配模式，如 `*.cpp`）
-    - [ ] `recursive`（可选，是否递归，默认false）
-  - [ ] 注册到 `ToolManager`
+- [x] **工具注册**
+  - [x] 实现 `registerListFilesTool(ToolManager& toolManager)` 静态方法
+  - [x] 定义工具参数Schema
+    - [x] `directory`（可选，目录路径，默认为当前目录）
+    - [x] `pattern`（可选，文件匹配模式，如 `*.cpp`）
+    - [x] `recursive`（可选，是否递归，默认false）
+  - [x] 注册到 `ToolManager`
 
 **验收标准**：
 - 单测验证：列出目录文件成功。
@@ -279,41 +279,41 @@ src/naw/desktop_pet/service/
 - 单测验证：目录不存在时返回错误。
 
 #### 5.2.3.3 search_code工具实现
-- [ ] **文本搜索**
-  - [ ] 实现文本搜索逻辑（逐文件搜索）
-  - [ ] 支持精确匹配搜索
-  - [ ] 支持大小写敏感/不敏感搜索（`case_sensitive` 参数）
-  - [ ] 支持多文件搜索（遍历目录）
+- [x] **文本搜索**
+  - [x] 实现文本搜索逻辑（逐文件搜索）
+  - [x] 支持精确匹配搜索
+  - [x] 支持大小写敏感/不敏感搜索（`case_sensitive` 参数）
+  - [x] 支持多文件搜索（遍历目录）
 
-- [ ] **正则表达式支持**
-  - [ ] 实现正则表达式搜索（使用 `std::regex` 或第三方库）
-  - [ ] 支持标准正则表达式语法
-  - [ ] 处理正则表达式编译错误（无效正则）
-  - [ ] 提供正则表达式和文本搜索的统一接口
+- [x] **正则表达式支持**
+  - [x] 实现正则表达式搜索（使用 `std::regex` 或第三方库）
+  - [x] 支持标准正则表达式语法
+  - [x] 处理正则表达式编译错误（无效正则）
+  - [x] 提供正则表达式和文本搜索的统一接口
 
-- [ ] **文件类型过滤**
-  - [ ] 支持按文件扩展名过滤（`file_pattern` 参数）
-  - [ ] 支持多种文件类型（如 `*.cpp,*.h`）
-  - [ ] 在搜索前先进行文件过滤（性能优化）
+- [x] **文件类型过滤**
+  - [x] 支持按文件扩展名过滤（`file_pattern` 参数）
+  - [x] 支持多种文件类型（如 `*.cpp,*.h`）
+  - [x] 在搜索前先进行文件过滤（性能优化）
 
-- [ ] **返回结果格式**
-  - [ ] 定义返回JSON结构
-    - [ ] `matches`（匹配结果列表）
-      - [ ] `file`（文件路径）
-      - [ ] `line`（行号）
-      - [ ] `column`（列号，可选）
-      - [ ] `context`（匹配行上下文，可选）
-    - [ ] `total_matches`（总匹配数）
-    - [ ] `files_searched`（搜索的文件数）
+- [x] **返回结果格式**
+  - [x] 定义返回JSON结构
+    - [x] `matches`（匹配结果列表）
+      - [x] `file`（文件路径）
+      - [x] `line`（行号）
+      - [x] `column`（列号，可选）
+      - [x] `context`（匹配行上下文，可选）
+    - [x] `total_matches`（总匹配数）
+    - [x] `files_searched`（搜索的文件数）
 
-- [ ] **工具注册**
-  - [ ] 实现 `registerSearchCodeTool(ToolManager& toolManager)` 静态方法
-  - [ ] 定义工具参数Schema
-    - [ ] `query`（必需，搜索查询文本或正则表达式）
-    - [ ] `directory`（可选，搜索目录，默认为当前目录）
-    - [ ] `file_pattern`（可选，文件类型过滤，如 `*.cpp`）
-    - [ ] `case_sensitive`（可选，是否区分大小写，默认false）
-  - [ ] 注册到 `ToolManager`
+- [x] **工具注册**
+  - [x] 实现 `registerSearchCodeTool(ToolManager& toolManager)` 静态方法
+  - [x] 定义工具参数Schema
+    - [x] `query`（必需，搜索查询文本或正则表达式）
+    - [x] `directory`（可选，搜索目录，默认为当前目录）
+    - [x] `file_pattern`（可选，文件类型过滤，如 `*.cpp`）
+    - [x] `case_sensitive`（可选，是否区分大小写，默认false）
+  - [x] 注册到 `ToolManager`
 
 **验收标准**：
 - 单测验证：文本搜索正确（精确匹配）。
@@ -322,44 +322,44 @@ src/naw/desktop_pet/service/
 - 单测验证：大小写敏感/不敏感搜索正确。
 
 #### 5.2.3.4 get_project_structure工具实现
-- [ ] **项目结构分析**
-  - [ ] 实现项目根目录识别（查找 `.git`、`CMakeLists.txt` 等标识）
-  - [ ] 实现目录结构扫描（递归遍历）
-  - [ ] 识别项目类型（C++、Python等，通过配置文件）
-  - [ ] 提取目录树结构
+- [x] **项目结构分析**
+  - [x] 实现项目根目录识别（查找 `.git`、`CMakeLists.txt` 等标识）
+  - [x] 实现目录结构扫描（递归遍历）
+  - [x] 识别项目类型（C++、Python等，通过配置文件）
+  - [x] 提取目录树结构
 
-- [ ] **CMake解析**
-  - [ ] 实现 `CMakeLists.txt` 文件解析
-    - [ ] 解析项目名称（`project()`）
-    - [ ] 解析源文件列表（`add_executable()`、`add_library()`）
-    - [ ] 解析依赖关系（`target_link_libraries()`、`find_package()`）
-    - [ ] 解析编译选项（`target_compile_options()`）
-  - [ ] 处理CMake解析错误（语法错误、文件不存在等）
-  - [ ] 支持简单的CMake语法（不完全解析，提取关键信息）
+- [x] **CMake解析**
+  - [x] 实现 `CMakeLists.txt` 文件解析
+    - [x] 解析项目名称（`project()`）
+    - [x] 解析源文件列表（`add_executable()`、`add_library()`）
+    - [x] 解析依赖关系（`target_link_libraries()`、`find_package()`）
+    - [x] 解析编译选项（`target_compile_options()`）
+  - [x] 处理CMake解析错误（语法错误、文件不存在等）
+  - [x] 支持简单的CMake语法（不完全解析，提取关键信息）
 
-- [ ] **依赖关系提取**
-  - [ ] 从CMake配置提取依赖库
-  - [ ] 从源码提取 `#include` 依赖（可选）
-  - [ ] 构建依赖关系图（可选）
-  - [ ] 返回依赖列表
+- [x] **依赖关系提取**
+  - [x] 从CMake配置提取依赖库
+  - [x] 从源码提取 `#include` 依赖（可选）
+  - [x] 构建依赖关系图（可选）
+  - [x] 返回依赖列表
 
-- [ ] **返回结果格式**
-  - [ ] 定义返回JSON结构
-    - [ ] `project_name`（项目名称）
-    - [ ] `root_path`（项目根路径）
-    - [ ] `structure`（目录结构树）
-    - [ ] `source_files`（源文件列表）
-    - [ ] `header_files`（头文件列表）
-    - [ ] `cmake_config`（CMake配置信息，可选）
-    - [ ] `dependencies`（依赖列表，可选）
+- [x] **返回结果格式**
+  - [x] 定义返回JSON结构
+    - [x] `project_name`（项目名称）
+    - [x] `root_path`（项目根路径）
+    - [x] `structure`（目录结构树）
+    - [x] `source_files`（源文件列表）
+    - [x] `header_files`（头文件列表）
+    - [x] `cmake_config`（CMake配置信息，可选）
+    - [x] `dependencies`（依赖列表，可选）
 
-- [ ] **工具注册**
-  - [ ] 实现 `registerGetProjectStructureTool(ToolManager& toolManager)` 静态方法
-  - [ ] 定义工具参数Schema
-    - [ ] `include_files`（可选，是否包含文件列表，默认true）
-    - [ ] `include_dependencies`（可选，是否包含依赖关系，默认true）
-    - [ ] `project_root`（可选，项目根路径，默认自动检测）
-  - [ ] 注册到 `ToolManager`
+- [x] **工具注册**
+  - [x] 实现 `registerGetProjectStructureTool(ToolManager& toolManager)` 静态方法
+  - [x] 定义工具参数Schema
+    - [x] `include_files`（可选，是否包含文件列表，默认true）
+    - [x] `include_dependencies`（可选，是否包含依赖关系，默认true）
+    - [x] `project_root`（可选，项目根路径，默认自动检测）
+  - [x] 注册到 `ToolManager`
 
 **验收标准**：
 - 单测验证：项目结构分析正确（目录树）。
@@ -368,55 +368,121 @@ src/naw/desktop_pet/service/
 - 单测验证：项目根目录自动识别正确。
 
 #### 5.2.3.5 analyze_code工具实现
-- [ ] **代码解析**
-  - [ ] 实现代码文件解析（C++、Python等，根据文件扩展名）
-  - [ ] 使用简单解析器或正则表达式（不依赖完整编译器）
-  - [ ] 提取代码结构信息
+- [x] **代码解析**
+  - [x] 实现代码文件解析（C++、Python等，根据文件扩展名）
+  - [x] 使用简单解析器或正则表达式（不依赖完整编译器）
+  - [x] 提取代码结构信息
 
-- [ ] **函数/类提取**
-  - [ ] C++：提取函数定义（函数名、参数、返回类型）
-  - [ ] C++：提取类定义（类名、成员变量、成员函数）
-  - [ ] Python：提取函数定义和类定义
-  - [ ] 支持命名空间/模块（C++ `namespace`、Python `module`）
-  - [ ] 返回结构化信息（JSON格式）
+- [x] **函数/类提取**
+  - [x] C++：提取函数定义（函数名、参数、返回类型）
+  - [x] C++：提取类定义（类名、成员变量、成员函数）
+  - [x] Python：提取函数定义和类定义
+  - [x] 支持命名空间/模块（C++ `namespace`、Python `module`）
+  - [x] 返回结构化信息（JSON格式）
 
-- [ ] **依赖分析**
-  - [ ] 提取 `#include` 语句（C++）
-  - [ ] 提取 `import` 语句（Python）
-  - [ ] 分析函数调用关系（可选，复杂）
-  - [ ] 分析类继承关系（可选，复杂）
+- [x] **依赖分析**
+  - [x] 提取 `#include` 语句（C++）
+  - [x] 提取 `import` 语句（Python）
+  - [x] 分析函数调用关系（可选，复杂）
+  - [x] 分析类继承关系（可选，复杂）
 
-- [ ] **返回结果格式**
-  - [ ] 定义返回JSON结构
-    - [ ] `path`（文件路径）
-    - [ ] `language`（语言类型）
-    - [ ] `functions`（函数列表）
-      - [ ] `name`（函数名）
-      - [ ] `signature`（函数签名）
-      - [ ] `line`（定义行号）
-    - [ ] `classes`（类列表）
-      - [ ] `name`（类名）
-      - [ ] `line`（定义行号）
-      - [ ] `methods`（方法列表）
-    - [ ] `includes`（依赖列表，可选）
+- [x] **返回结果格式**
+  - [x] 定义返回JSON结构
+    - [x] `path`（文件路径）
+    - [x] `language`（语言类型）
+    - [x] `functions`（函数列表）
+      - [x] `name`（函数名）
+      - [x] `signature`（函数签名）
+      - [x] `line`（定义行号）
+    - [x] `classes`（类列表）
+      - [x] `name`（类名）
+      - [x] `line`（定义行号）
+      - [x] `methods`（方法列表）
+    - [x] `includes`（依赖列表，可选）
 
-- [ ] **工具注册**
-  - [ ] 实现 `registerAnalyzeCodeTool(ToolManager& toolManager)` 静态方法
-  - [ ] 定义工具参数Schema
-    - [ ] `path`（必需，代码文件路径）
-    - [ ] `analysis_type`（可选，分析类型：`functions`、`classes`、`dependencies`、`all`，默认`all`）
-  - [ ] 注册到 `ToolManager`
-
-- [ ] **统一工具注册接口**
-  - [ ] 实现 `CodeTools::registerAllTools(ToolManager& toolManager)` 静态方法
-    - [ ] 调用所有工具的注册方法
-    - [ ] 一次性注册所有代码工具
+- [x] **工具注册**
+  - [x] 实现 `registerAnalyzeCodeTool(ToolManager& toolManager)` 静态方法
+  - [x] 定义工具参数Schema
+    - [x] `path`（必需，代码文件路径）
+    - [x] `analysis_type`（可选，分析类型：`functions`、`classes`、`dependencies`、`all`，默认`all`）
+  - [x] 注册到 `ToolManager`
 
 **验收标准**：
 - 单测验证：函数提取正确（C++/Python）。
 - 单测验证：类提取正确（C++/Python）。
 - 单测验证：依赖分析正确（include/import）。
 - 单测验证：代码解析错误处理正确（无效语法等）。
+
+#### 5.2.3.6 write_file工具实现
+- [x] **文件写入基础功能**
+  - [x] 实现文件写入逻辑（使用 `std::ofstream` 或平台API）
+  - [x] 支持文本文件写入（UTF-8编码）
+  - [x] 处理文件路径不存在错误（创建目录，可选）
+  - [x] 处理文件写入权限错误
+  - [x] 处理磁盘空间不足错误
+  - [x] 支持文件覆盖模式和追加模式
+
+- [x] **写入模式支持**
+  - [x] 实现写入模式参数（`mode`：`"overwrite"`、`"append"`、`"create_only"`等）
+  - [x] 支持覆盖模式（`overwrite`：如果文件存在则覆盖）
+  - [x] 支持追加模式（`append`：在文件末尾追加内容）
+  - [x] 支持创建模式（`create_only`：仅当文件不存在时创建）
+  - [x] 处理模式冲突（文件已存在但使用 `create_only` 模式）
+
+- [x] **行范围写入支持（可选）**
+  - [x] 实现行范围参数解析（`startLine`、`endLine`）
+  - [x] 实现行范围替换逻辑
+    - [x] 支持单行替换（`startLine == endLine`）
+    - [x] 支持多行替换（`startLine < endLine`）
+    - [x] 处理边界情况（超出文件范围、负数等）
+  - [x] 读取原文件内容，替换指定行范围，写回文件
+
+- [x] **内容格式处理**
+  - [x] 支持字符串内容直接写入
+  - [x] 支持多行文本写入（保持换行符）
+  - [x] 处理不同平台换行符差异（Windows `\r\n`、Unix `\n`）
+  - [x] 支持JSON格式内容写入（可选，格式化JSON）
+
+- [x] **错误处理**
+  - [x] 文件路径无效时返回错误信息
+  - [x] 文件写入失败时返回错误信息
+  - [x] 权限不足时返回错误信息
+  - [x] 磁盘空间不足时返回错误信息
+  - [x] 返回标准错误格式（JSON格式）
+
+- [x] **返回结果格式**
+  - [x] 定义返回JSON结构
+    - [x] `success`（是否成功，布尔值）
+    - [x] `path`（文件路径）
+    - [x] `bytes_written`（写入的字节数）
+    - [x] `mode`（使用的写入模式）
+    - [x] `message`（成功/错误消息）
+    - [x] `error`（错误信息，如果写入失败）
+
+- [x] **工具注册**
+  - [x] 实现 `registerWriteFileTool(ToolManager& toolManager)` 静态方法
+  - [x] 定义工具参数Schema
+    - [x] `path`（必需，文件路径）
+    - [x] `content`（必需，要写入的内容，字符串）
+    - [x] `mode`（可选，写入模式：`"overwrite"`、`"append"`、`"create_only"`，默认`"overwrite"`）
+    - [x] `start_line`（可选，起始行号，用于行范围替换，从1开始）
+    - [x] `end_line`（可选，结束行号，用于行范围替换）
+    - [x] `create_directories`（可选，是否自动创建目录，默认false）
+  - [x] 注册到 `ToolManager`
+
+**验收标准**：
+- 单测验证：写入新文件成功。
+- 单测验证：覆盖现有文件成功。
+- 单测验证：追加内容到文件成功。
+- 单测验证：行范围替换成功。
+- 单测验证：文件路径无效时返回错误。
+- 单测验证：权限不足时返回错误。
+- 单测验证：创建目录选项正确工作。
+
+- [x] **统一工具注册接口**
+  - [x] 实现 `CodeTools::registerAllTools(ToolManager& toolManager)` 静态方法
+    - [x] 调用所有工具的注册方法（包括 `registerReadFileTool`、`registerWriteFileTool`、`registerListFilesTool`、`registerSearchCodeTool`、`registerGetProjectStructureTool`、`registerAnalyzeCodeTool`）
+    - [x] 一次性注册所有代码工具
 
 ---
 
@@ -892,12 +958,13 @@ src/naw/desktop_pet/service/
   - [ ] 工具权限控制测试（如果实现）
   - [ ] 线程安全测试（并发注册/执行）
 
-- [ ] **CodeTools测试**
-  - [ ] read_file工具测试（完整文件、行范围、错误处理）
-  - [ ] list_files工具测试（目录遍历、过滤、递归）
-  - [ ] search_code工具测试（文本搜索、正则、文件过滤）
-  - [ ] get_project_structure工具测试（结构分析、CMake解析）
-  - [ ] analyze_code工具测试（函数提取、类提取、依赖分析）
+- [x] **CodeTools测试**
+  - [x] read_file工具测试（完整文件、行范围、错误处理）
+  - [x] write_file工具测试（写入新文件、覆盖、追加、行范围替换、错误处理）
+  - [x] list_files工具测试（目录遍历、过滤、递归）
+  - [x] search_code工具测试（文本搜索、正则、文件过滤）
+  - [x] get_project_structure工具测试（结构分析、CMake解析）
+  - [x] analyze_code工具测试（函数提取、类提取、依赖分析）
 
 - [ ] **FunctionCallingHandler测试**
   - [ ] 工具调用检测测试（识别、参数提取）
@@ -951,7 +1018,7 @@ src/naw/desktop_pet/service/
 
 ### 第二阶段：代码工具集（5.2）
 1. 完成 `CodeTools`，实现标准代码工具。
-2. 逐个实现各个工具（read_file、list_files等）。
+2. 逐个实现各个工具（read_file、write_file、list_files等）。
 3. 集成到 `ToolManager`。
 
 ### 第三阶段：Function Calling处理器（5.3）
@@ -988,15 +1055,16 @@ src/naw/desktop_pet/service/
 **进度**: 5/5 主要模块完成 ✅（包含所有可选功能）
 
 ### 5.2 代码工具集（CodeTools）
-- [ ] read_file工具实现
-- [ ] list_files工具实现
-- [ ] search_code工具实现
-- [ ] get_project_structure工具实现
-- [ ] analyze_code工具实现
-- [ ] 统一工具注册接口
-- [ ] 单元测试
+- [x] read_file工具实现
+- [x] write_file工具实现
+- [x] list_files工具实现
+- [x] search_code工具实现
+- [x] get_project_structure工具实现
+- [x] analyze_code工具实现
+- [x] 统一工具注册接口
+- [x] 单元测试
 
-**进度**: 0/7 主要模块完成
+**进度**: 8/8 主要模块完成 ✅
 
 ### 5.3 Function Calling处理器（FunctionCallingHandler）
 - [ ] 工具调用检测
@@ -1026,24 +1094,24 @@ src/naw/desktop_pet/service/
 
 ### 5.6 单元测试与示例
 - [x] ToolManager测试
-- [ ] CodeTools测试
+- [x] CodeTools测试
 - [ ] FunctionCallingHandler测试
 - [ ] MCPService测试
 - [ ] ProjectContextCollector测试
 - [ ] 集成测试
 
-**进度**: 1/6 主要模块完成
+**进度**: 2/6 主要模块完成
 
 ---
 
 ## 总体进度
 
-**Phase 5 总体进度**: 6/27 主要模块完成
+**Phase 5 总体进度**: 14/28 主要模块完成
 
 **各模块完成情况**：
 - 5.1 工具管理器（ToolManager）: 5/5 ✅
-- 5.2 代码工具集（CodeTools）: 0/7
+- 5.2 代码工具集（CodeTools）: 8/8 ✅
 - 5.3 Function Calling处理器（FunctionCallingHandler）: 0/4
 - 5.4 MCP服务（MCPService）: 0/5
 - 5.5 项目上下文收集器（ProjectContextCollector）: 0/5
-- 5.6 单元测试与示例: 1/6
+- 5.6 单元测试与示例: 2/6
