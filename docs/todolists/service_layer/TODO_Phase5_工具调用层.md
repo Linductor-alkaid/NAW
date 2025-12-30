@@ -66,7 +66,7 @@ src/naw/desktop_pet/service/
     - [x] `description`（工具描述，用于 Function Calling）
     - [x] `parametersSchema`（参数Schema，JSON Schema格式）
     - [x] `handler`（工具处理器函数：`std::function<nlohmann::json(const nlohmann::json&)>`）
-  - [ ] 实现工具定义的序列化/反序列化（可选，用于配置化工具）
+  - [x] 实现工具定义的序列化/反序列化（可选，用于配置化工具）
   - [x] 实现工具定义验证（名称非空、Schema有效等）
 
 - [x] **工具参数Schema定义**
@@ -98,10 +98,10 @@ src/naw/desktop_pet/service/
   - [x] 支持成员函数注册（使用 `std::bind` 或 Lambda 包装）
   - [x] 处理器签名：`nlohmann::json handler(const nlohmann::json& arguments)`
 
-- [ ] **工具权限控制（可选）**
-  - [ ] 定义权限级别（`Public`、`Restricted`、`Admin` 等，可选）
-  - [ ] 在工具定义中添加权限字段（可选）
-  - [ ] 实现权限检查接口（`checkPermission(const std::string& toolName, PermissionLevel level)`，可选）
+- [x] **工具权限控制（可选）**
+  - [x] 定义权限级别（`Public`、`Restricted`、`Admin` 等，可选）
+  - [x] 在工具定义中添加权限字段（可选）
+  - [x] 实现权限检查接口（`checkPermission(const std::string& toolName, PermissionLevel level)`，可选）
 
 **验收标准**：
 - 单测验证：工具注册后能正确查询。
@@ -123,11 +123,11 @@ src/naw/desktop_pet/service/
     - [x] 返回所有已注册工具的列表（`std::vector<ToolDefinition>`）
   - [x] 实现 `getToolNames()` 方法
     - [x] 返回所有工具名称列表（`std::vector<std::string>`）
-  - [ ] 实现工具过滤（按名称前缀、按权限等，可选）
+  - [x] 实现工具过滤（按名称前缀、按权限等，可选）
 
-- [ ] **工具查询统计**
-  - [ ] 实现工具使用统计（调用次数、最后调用时间等，可选）
-  - [ ] 实现工具性能统计（平均执行时间、错误率等，可选）
+- [x] **工具查询统计**
+  - [x] 实现工具使用统计（调用次数、最后调用时间等，可选）
+  - [x] 实现工具性能统计（平均执行时间、错误率等，可选）
 
 **验收标准**：
 - 单测验证：工具查询接口返回正确结果。
@@ -138,7 +138,7 @@ src/naw/desktop_pet/service/
   - [x] 实现 `validateArguments(const ToolDefinition& tool, const nlohmann::json& arguments)` 方法
     - [x] 检查必需字段是否存在
     - [x] 检查字段类型是否正确（使用JSON Schema验证）
-    - [ ] 检查字段值是否在允许范围内（enum、range等）
+    - [x] 检查字段值是否在允许范围内（enum、range等）
     - [x] 返回验证结果（成功/失败 + 错误信息）
   - [x] 在工具执行前自动进行参数验证
   - [x] 验证失败时返回清晰的错误信息
@@ -153,7 +153,7 @@ src/naw/desktop_pet/service/
   - [x] 实现异常处理
     - [x] 捕获 `std::exception` 异常
     - [x] 返回错误信息（使用 `ErrorInfo` 结构）
-    - [ ] 记录错误日志（可选）
+    - [x] 记录错误日志（可选）
 
 - [x] **结果返回**
   - [x] 工具执行结果统一为 JSON 格式
@@ -163,12 +163,12 @@ src/naw/desktop_pet/service/
 - [x] **错误处理**
   - [x] 定义工具执行错误类型（通过 `ErrorType` 枚举：`InvalidRequest`、`ServerError` 等）
   - [x] 实现错误分类和错误信息返回
-  - [ ] 集成 `ErrorHandler` 进行统一错误处理（可选）
+  - [x] 集成 `ErrorHandler` 进行统一错误处理（可选）
 
-- [ ] **工具执行统计（可选）**
-  - [ ] 记录工具调用次数
-  - [ ] 记录工具执行时间
-  - [ ] 记录工具执行错误次数
+- [x] **工具执行统计（可选）**
+  - [x] 记录工具调用次数
+  - [x] 记录工具执行时间
+  - [x] 记录工具执行错误次数
 
 **验收标准**：
 - 单测验证：参数验证正确（必需字段、类型检查）。
@@ -983,8 +983,9 @@ src/naw/desktop_pet/service/
 - [x] 工具查询
 - [x] 工具执行
 - [x] 单元测试
+- [x] 可选功能（序列化/反序列化、权限控制、工具过滤、统计功能、参数验证增强、ErrorHandler集成）
 
-**进度**: 5/5 主要模块完成 ✅
+**进度**: 5/5 主要模块完成 ✅（包含所有可选功能）
 
 ### 5.2 代码工具集（CodeTools）
 - [ ] read_file工具实现

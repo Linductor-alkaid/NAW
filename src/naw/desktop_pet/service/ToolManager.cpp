@@ -3,12 +3,98 @@
 #include "naw/desktop_pet/service/ErrorHandler.h"
 
 #include <algorithm>
+#include <chrono>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 
 namespace naw::desktop_pet::service {
 
+// ========== ToolUsageStats ==========
+
+nlohmann::json ToolUsageStats::toJson() const {
+    nlohmann::json j;
+    j["call_count"] = callCount;
+    // 如果从未调用过，lastCallTime可能是默认值，需要检查
+    if (callCount > 0) {
+        const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(lastCallTime.time_since_epoch()).count();
+        j["last_call_time_ms"] = ms;
+    } else {
+        j["last_call_time_ms"] = 0;
+    }
+    j["average_execution_time_ms"] = averageExecutionTimeMs;
+    j["error_count"] = errorCount;
+    j["error_rate"] = errorRate;
+    return j;
+}
+
 // ========== ToolDefinition ==========
+
+nlohmann::json ToolDefinition::toJson() const {
+    nlohmann::json j;
+    j["name"] = name;
+    j["description"] = description;
+    j["parameters_schema"] = parametersSchema;
+    // 权限级别转换为字符串
+    const char* permStr = "Public";
+    switch (permissionLevel) {
+        case PermissionLevel::Restricted:
+            permStr = "Restricted";
+            break;
+        case PermissionLevel::Admin:
+            permStr = "Admin";
+            break;
+        default:
+            permStr = "Public";
+            break;
+    }
+    j["permission_level"] = permStr;
+    // 注意：handler函数无法序列化，需要在反序列化时外部提供
+    j["_requires_handler"] = true;
+    return j;
+}
+
+std::optional<ToolDefinition> ToolDefinition::fromJson(const nlohmann::json& json, std::string* errorMsg) {
+    ToolDefinition tool;
+
+    // 解析名称
+    if (!json.contains("name") || !json["name"].is_string()) {
+        if (errorMsg) *errorMsg = "Missing or invalid 'name' field";
+        return std::nullopt;
+    }
+    tool.name = json["name"].get<std::string>();
+
+    // 解析描述
+    if (json.contains("description") && json["description"].is_string()) {
+        tool.description = json["description"].get<std::string>();
+    }
+
+    // 解析参数Schema
+    if (!json.contains("parameters_schema") || !json["parameters_schema"].is_object()) {
+        if (errorMsg) *errorMsg = "Missing or invalid 'parameters_schema' field";
+        return std::nullopt;
+    }
+    tool.parametersSchema = json["parameters_schema"];
+
+    // 解析权限级别
+    if (json.contains("permission_level") && json["permission_level"].is_string()) {
+        std::string permStr = json["permission_level"].get<std::string>();
+        if (permStr == "Restricted") {
+            tool.permissionLevel = PermissionLevel::Restricted;
+        } else if (permStr == "Admin") {
+            tool.permissionLevel = PermissionLevel::Admin;
+        } else {
+            tool.permissionLevel = PermissionLevel::Public;
+        }
+    } else {
+        tool.permissionLevel = PermissionLevel::Public; // 默认值
+    }
+
+    // 注意：handler需要外部提供，这里不设置
+    // 调用者需要在反序列化后设置handler
+
+    return tool;
+}
 
 bool ToolDefinition::isValid(std::string* errorMsg) const {
     if (name.empty()) {
@@ -41,7 +127,7 @@ bool ToolDefinition::isValid(std::string* errorMsg) const {
 
 // ========== ToolManager ==========
 
-ToolManager::ToolManager() = default;
+ToolManager::ToolManager(ErrorHandler* errorHandler) : m_errorHandler(errorHandler) {}
 
 bool ToolManager::registerTool(const ToolDefinition& tool, bool allowOverwrite, ErrorInfo* error) {
     // 验证工具定义
@@ -136,18 +222,67 @@ size_t ToolManager::getToolCount() const {
 
 std::optional<nlohmann::json> ToolManager::executeTool(const std::string& toolName,
                                                         const nlohmann::json& arguments,
-                                                        ErrorInfo* error) {
+                                                        ErrorInfo* error,
+                                                        bool checkPermission,
+                                                        PermissionLevel requiredPermission) {
+    // 记录执行开始时间
+    auto startTime = std::chrono::high_resolution_clock::now();
+    bool executionSuccess = false;
+
     // 查找工具
     auto toolOpt = getTool(toolName);
     if (!toolOpt.has_value()) {
+        ErrorInfo err;
+        err.errorType = ErrorType::InvalidRequest;
+        err.message = "Tool '" + toolName + "' not found";
+        
         if (error) {
-            error->errorType = ErrorType::InvalidRequest;
-            error->message = "Tool '" + toolName + "' not found";
+            *error = err;
         }
+        
+        // 记录错误日志
+        if (m_errorHandler) {
+            m_errorHandler->log(ErrorHandler::LogLevel::Warning, 
+                               "Tool execution failed: " + err.message, 
+                               std::make_optional(err));
+        }
+        
+        // 更新统计（工具不存在）
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        updateToolStats(toolName, duration.count() / 1000.0, false);
+        
         return std::nullopt;
     }
 
     const auto& tool = toolOpt.value();
+
+    // 检查权限（如果启用）
+    if (checkPermission) {
+        if (!this->checkPermission(toolName, requiredPermission)) {
+            ErrorInfo err;
+            err.errorType = ErrorType::InvalidRequest;
+            err.message = "Insufficient permission to execute tool '" + toolName + "'";
+            
+            if (error) {
+                *error = err;
+            }
+            
+            // 记录错误日志
+            if (m_errorHandler) {
+                m_errorHandler->log(ErrorHandler::LogLevel::Warning, 
+                                   "Tool execution permission denied: " + err.message, 
+                                   std::make_optional(err));
+            }
+            
+            // 更新统计（权限不足）
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+            updateToolStats(toolName, duration.count() / 1000.0, false);
+            
+            return std::nullopt;
+        }
+    }
 
     // 验证参数
     ErrorInfo validationError;
@@ -155,24 +290,76 @@ std::optional<nlohmann::json> ToolManager::executeTool(const std::string& toolNa
         if (error) {
             *error = validationError;
         }
+        
+        // 记录错误日志
+        if (m_errorHandler) {
+            m_errorHandler->log(ErrorHandler::LogLevel::Warning, 
+                               "Tool argument validation failed: " + validationError.message, 
+                               std::make_optional(validationError));
+        }
+        
+        // 更新统计（参数验证失败）
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        updateToolStats(toolName, duration.count() / 1000.0, false);
+        
         return std::nullopt;
     }
 
     // 执行工具
     try {
         nlohmann::json result = tool.handler(arguments);
+        executionSuccess = true;
+        
+        // 更新统计（成功）
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        updateToolStats(toolName, duration.count() / 1000.0, true);
+        
         return result;
     } catch (const std::exception& e) {
+        ErrorInfo err;
+        err.errorType = ErrorType::ServerError;
+        err.message = "Tool execution failed: " + std::string(e.what());
+        
         if (error) {
-            error->errorType = ErrorType::ServerError;
-            error->message = "Tool execution failed: " + std::string(e.what());
+            *error = err;
         }
+        
+        // 记录错误日志
+        if (m_errorHandler) {
+            m_errorHandler->log(ErrorHandler::LogLevel::Error, 
+                               "Tool execution exception: " + err.message, 
+                               std::make_optional(err));
+        }
+        
+        // 更新统计（执行异常）
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        updateToolStats(toolName, duration.count() / 1000.0, false);
+        
         return std::nullopt;
     } catch (...) {
+        ErrorInfo err;
+        err.errorType = ErrorType::ServerError;
+        err.message = "Tool execution failed: unknown error";
+        
         if (error) {
-            error->errorType = ErrorType::ServerError;
-            error->message = "Tool execution failed: unknown error";
+            *error = err;
         }
+        
+        // 记录错误日志
+        if (m_errorHandler) {
+            m_errorHandler->log(ErrorHandler::LogLevel::Error, 
+                               "Tool execution unknown error", 
+                               std::make_optional(err));
+        }
+        
+        // 更新统计（未知错误）
+        auto endTime = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+        updateToolStats(toolName, duration.count() / 1000.0, false);
+        
         return std::nullopt;
     }
 }
@@ -280,6 +467,7 @@ bool ToolManager::validatePropertyValue(const nlohmann::json& value,
             if (errorMsg) *errorMsg = "Expected string, got " + std::string(value.type_name());
             return false;
         }
+        // 字符串类型验证通过，继续验证字符串长度等约束
     } else if (typeStr == "number") {
         if (!value.is_number()) {
             if (errorMsg) *errorMsg = "Expected number, got " + std::string(value.type_name());
@@ -336,7 +524,243 @@ bool ToolManager::validatePropertyValue(const nlohmann::json& value,
         return true;
     }
 
+    // 验证 enum（如果指定）- 适用于所有类型
+    if (propertySchema.contains("enum") && propertySchema["enum"].is_array()) {
+        bool found = false;
+        for (const auto& enumValue : propertySchema["enum"]) {
+            if (enumValue == value) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            if (errorMsg) *errorMsg = "Value not in enum list";
+            return false;
+        }
+    }
+
+    // 验证数字范围（minimum/maximum）- 适用于number和integer类型
+    if (value.is_number()) {
+        if (propertySchema.contains("minimum")) {
+            double minVal = propertySchema["minimum"].get<double>();
+            double val = value.get<double>();
+            if (val < minVal) {
+                if (errorMsg) *errorMsg = "Value " + std::to_string(val) + " is less than minimum " + std::to_string(minVal);
+                return false;
+            }
+        }
+        if (propertySchema.contains("maximum")) {
+            double maxVal = propertySchema["maximum"].get<double>();
+            double val = value.get<double>();
+            if (val > maxVal) {
+                if (errorMsg) *errorMsg = "Value " + std::to_string(val) + " is greater than maximum " + std::to_string(maxVal);
+                return false;
+            }
+        }
+    }
+
+    // 验证字符串长度（minLength/maxLength）和pattern - 适用于string类型
+    if (typeStr == "string" && value.is_string()) {
+        std::string str = value.get<std::string>();
+        if (propertySchema.contains("minLength")) {
+            // 支持number_integer和number_unsigned
+            size_t minLen = 0;
+            if (propertySchema["minLength"].is_number_unsigned()) {
+                minLen = propertySchema["minLength"].get<size_t>();
+            } else if (propertySchema["minLength"].is_number_integer()) {
+                int64_t minLenInt = propertySchema["minLength"].get<int64_t>();
+                if (minLenInt < 0) {
+                    if (errorMsg) *errorMsg = "minLength cannot be negative";
+                    return false;
+                }
+                minLen = static_cast<size_t>(minLenInt);
+            }
+            if (str.length() < minLen) {
+                if (errorMsg) *errorMsg = "String length " + std::to_string(str.length()) + " is less than minLength " + std::to_string(minLen);
+                return false;
+            }
+        }
+        if (propertySchema.contains("maxLength")) {
+            // 支持number_integer和number_unsigned
+            size_t maxLen = 0;
+            if (propertySchema["maxLength"].is_number_unsigned()) {
+                maxLen = propertySchema["maxLength"].get<size_t>();
+            } else if (propertySchema["maxLength"].is_number_integer()) {
+                int64_t maxLenInt = propertySchema["maxLength"].get<int64_t>();
+                if (maxLenInt < 0) {
+                    if (errorMsg) *errorMsg = "maxLength cannot be negative";
+                    return false;
+                }
+                maxLen = static_cast<size_t>(maxLenInt);
+            }
+            if (str.length() > maxLen) {
+                if (errorMsg) *errorMsg = "String length " + std::to_string(str.length()) + " is greater than maxLength " + std::to_string(maxLen);
+                return false;
+            }
+        }
+        // 验证正则表达式pattern（可选）
+        if (propertySchema.contains("pattern") && propertySchema["pattern"].is_string()) {
+            try {
+                std::string pattern = propertySchema["pattern"].get<std::string>();
+                std::regex regexPattern(pattern);
+                if (!std::regex_match(str, regexPattern)) {
+                    if (errorMsg) *errorMsg = "String does not match pattern: " + pattern;
+                    return false;
+                }
+            } catch (const std::regex_error&) {
+                // 正则表达式无效，跳过验证（允许通过）
+            }
+        }
+    }
+
     return true;
+}
+
+// ========== 权限控制 ==========
+
+bool ToolManager::checkPermission(const std::string& toolName, PermissionLevel requiredLevel) const {
+    auto toolOpt = getTool(toolName);
+    if (!toolOpt.has_value()) {
+        return false; // 工具不存在
+    }
+
+    const auto& tool = toolOpt.value();
+    
+    // 权限级别检查：Admin > Restricted > Public
+    // 只有当 requiredLevel >= tool.permissionLevel 时才允许访问
+    // Public(0) < Restricted(1) < Admin(2)
+    // 所以：Public可以访问所有，Restricted可以访问Restricted和Admin，Admin只能访问Admin
+    
+    if (tool.permissionLevel == PermissionLevel::Public) {
+        return true; // Public工具所有人都可以访问
+    } else if (tool.permissionLevel == PermissionLevel::Restricted) {
+        // Restricted工具需要Restricted或Admin权限
+        return requiredLevel == PermissionLevel::Restricted || requiredLevel == PermissionLevel::Admin;
+    } else { // Admin
+        // Admin工具只能被Admin权限访问
+        return requiredLevel == PermissionLevel::Admin;
+    }
+}
+
+// ========== 工具过滤查询 ==========
+
+std::vector<ToolDefinition> ToolManager::getToolsByPrefix(const std::string& prefix) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<ToolDefinition> result;
+    
+    for (const auto& pair : m_tools) {
+        if (pair.first.size() >= prefix.size() && 
+            pair.first.substr(0, prefix.size()) == prefix) {
+            result.push_back(pair.second);
+        }
+    }
+    
+    return result;
+}
+
+std::vector<ToolDefinition> ToolManager::getToolsByPermission(PermissionLevel level) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<ToolDefinition> result;
+    
+    for (const auto& pair : m_tools) {
+        if (pair.second.permissionLevel == level) {
+            result.push_back(pair.second);
+        }
+    }
+    
+    return result;
+}
+
+std::vector<ToolDefinition> ToolManager::getFilteredTools(const ToolFilter& filter) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<ToolDefinition> result;
+    
+    for (const auto& pair : m_tools) {
+        bool matches = true;
+        
+        // 名称前缀过滤
+        if (filter.namePrefix.has_value()) {
+            const std::string& prefix = filter.namePrefix.value();
+            if (pair.first.size() < prefix.size() || 
+                pair.first.substr(0, prefix.size()) != prefix) {
+                matches = false;
+            }
+        }
+        
+        // 权限级别过滤
+        if (filter.permissionLevel.has_value() && matches) {
+            if (pair.second.permissionLevel != filter.permissionLevel.value()) {
+                matches = false;
+            }
+        }
+        
+        if (matches) {
+            result.push_back(pair.second);
+        }
+    }
+    
+    return result;
+}
+
+// ========== 统计功能 ==========
+
+void ToolManager::updateToolStats(const std::string& toolName, double executionTimeMs, bool success) {
+    std::lock_guard<std::mutex> lock(m_statsMutex);
+    
+    auto& stats = m_stats[toolName];
+    stats.callCount++;
+    stats.lastCallTime = std::chrono::system_clock::now();
+    
+    // 更新平均执行时间（使用移动平均）
+    if (stats.callCount == 1) {
+        stats.averageExecutionTimeMs = executionTimeMs;
+    } else {
+        // 移动平均：新平均值 = (旧平均值 * (n-1) + 新值) / n
+        stats.averageExecutionTimeMs = 
+            (stats.averageExecutionTimeMs * (stats.callCount - 1) + executionTimeMs) / stats.callCount;
+    }
+    
+    // 更新错误统计
+    if (!success) {
+        stats.errorCount++;
+    }
+    
+    // 计算错误率
+    if (stats.callCount > 0) {
+        stats.errorRate = static_cast<double>(stats.errorCount) / static_cast<double>(stats.callCount);
+    }
+}
+
+std::optional<ToolUsageStats> ToolManager::getToolStats(const std::string& toolName) const {
+    std::lock_guard<std::mutex> lock(m_statsMutex);
+    auto it = m_stats.find(toolName);
+    if (it != m_stats.end()) {
+        return it->second;
+    }
+    return std::nullopt;
+}
+
+std::unordered_map<std::string, ToolUsageStats> ToolManager::getAllToolStats() const {
+    std::lock_guard<std::mutex> lock(m_statsMutex);
+    return m_stats;
+}
+
+void ToolManager::resetToolStats(const std::string& toolName) {
+    std::lock_guard<std::mutex> lock(m_statsMutex);
+    if (toolName.empty()) {
+        // 重置所有统计
+        m_stats.clear();
+    } else {
+        // 重置指定工具的统计
+        m_stats.erase(toolName);
+    }
+}
+
+// ========== ErrorHandler 设置 ==========
+
+void ToolManager::setErrorHandler(ErrorHandler* errorHandler) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_errorHandler = errorHandler;
 }
 
 } // namespace naw::desktop_pet::service

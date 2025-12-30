@@ -1,5 +1,7 @@
 #include "naw/desktop_pet/service/ToolManager.h"
+#include "naw/desktop_pet/service/ErrorHandler.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -18,6 +20,17 @@ namespace mini_test {
 inline std::string toString(const std::string& v) { return v; }
 inline std::string toString(const char* v) { return v ? std::string(v) : "null"; }
 inline std::string toString(bool v) { return v ? "true" : "false"; }
+inline std::string toString(ErrorType v) { 
+    return ErrorInfo::errorTypeToString(v); 
+}
+inline std::string toString(PermissionLevel v) {
+    switch (v) {
+        case PermissionLevel::Public: return "Public";
+        case PermissionLevel::Restricted: return "Restricted";
+        case PermissionLevel::Admin: return "Admin";
+        default: return "Unknown";
+    }
+}
 
 template <typename T>
 std::string toString(const T& v) {
@@ -529,6 +542,366 @@ int main() {
 
         // 所有执行都应该成功
         CHECK_EQ(successCount.load(), numThreads * 20);
+    }});
+
+    // ========== 新功能测试：工具定义序列化/反序列化 ==========
+
+    tests.push_back({"ToolDefinition_Serialization", []() {
+        ToolDefinition tool = createSimpleTool("test_tool", "Test tool description");
+        tool.permissionLevel = PermissionLevel::Restricted;
+        
+        // 序列化
+        nlohmann::json json = tool.toJson();
+        CHECK_TRUE(json.contains("name"));
+        CHECK_TRUE(json.contains("description"));
+        CHECK_TRUE(json.contains("parameters_schema"));
+        CHECK_TRUE(json.contains("permission_level"));
+        CHECK_EQ(json["name"].get<std::string>(), "test_tool");
+        CHECK_EQ(json["permission_level"].get<std::string>(), "Restricted");
+        
+        // 反序列化（需要提供handler）
+        std::string errorMsg;
+        auto deserialized = ToolDefinition::fromJson(json, &errorMsg);
+        CHECK_TRUE(deserialized.has_value());
+        CHECK_EQ(deserialized->name, "test_tool");
+        CHECK_EQ(deserialized->description, "Test tool description");
+        CHECK_EQ(deserialized->permissionLevel, PermissionLevel::Restricted);
+    }});
+
+    // ========== 新功能测试：权限控制 ==========
+
+    tests.push_back({"PermissionControl_CheckPermission", []() {
+        ToolManager manager;
+        
+        ToolDefinition publicTool = createSimpleTool("public_tool", "Public tool");
+        publicTool.permissionLevel = PermissionLevel::Public;
+        CHECK_TRUE(manager.registerTool(publicTool));
+        
+        ToolDefinition restrictedTool = createSimpleTool("restricted_tool", "Restricted tool");
+        restrictedTool.permissionLevel = PermissionLevel::Restricted;
+        CHECK_TRUE(manager.registerTool(restrictedTool));
+        
+        ToolDefinition adminTool = createSimpleTool("admin_tool", "Admin tool");
+        adminTool.permissionLevel = PermissionLevel::Admin;
+        CHECK_TRUE(manager.registerTool(adminTool));
+        
+        // 检查权限
+        CHECK_TRUE(manager.checkPermission("public_tool", PermissionLevel::Public));
+        CHECK_TRUE(manager.checkPermission("restricted_tool", PermissionLevel::Restricted));
+        CHECK_TRUE(manager.checkPermission("admin_tool", PermissionLevel::Admin));
+        
+        // Restricted级别不能访问Admin工具
+        CHECK_FALSE(manager.checkPermission("admin_tool", PermissionLevel::Restricted));
+        
+        // Public级别不能访问Restricted和Admin工具
+        CHECK_FALSE(manager.checkPermission("restricted_tool", PermissionLevel::Public));
+        CHECK_FALSE(manager.checkPermission("admin_tool", PermissionLevel::Public));
+    }});
+
+    tests.push_back({"PermissionControl_ExecuteWithPermission", []() {
+        ToolManager manager;
+        
+        ToolDefinition restrictedTool = createSimpleTool("restricted_tool", "Restricted tool");
+        restrictedTool.permissionLevel = PermissionLevel::Restricted;
+        CHECK_TRUE(manager.registerTool(restrictedTool));
+        
+        // 不检查权限时应该成功
+        nlohmann::json args = {{"value", "test"}};
+        auto result1 = manager.executeTool("restricted_tool", args, nullptr, false);
+        CHECK_TRUE(result1.has_value());
+        
+        // 检查权限，Public级别应该失败
+        ErrorInfo error;
+        auto result2 = manager.executeTool("restricted_tool", args, &error, true, PermissionLevel::Public);
+        CHECK_FALSE(result2.has_value());
+        CHECK_EQ(error.errorType, ErrorType::InvalidRequest);
+    }});
+
+    // ========== 新功能测试：工具过滤 ==========
+
+    tests.push_back({"ToolFiltering_ByPrefix", []() {
+        ToolManager manager;
+        
+        CHECK_TRUE(manager.registerTool(createSimpleTool("tool_a", "Tool A")));
+        CHECK_TRUE(manager.registerTool(createSimpleTool("tool_b", "Tool B")));
+        CHECK_TRUE(manager.registerTool(createSimpleTool("test_tool", "Test tool")));
+        
+        auto tools = manager.getToolsByPrefix("tool_");
+        CHECK_EQ(tools.size(), 2);
+        
+        std::vector<std::string> names;
+        for (const auto& t : tools) {
+            names.push_back(t.name);
+        }
+        CHECK_TRUE(std::find(names.begin(), names.end(), "tool_a") != names.end());
+        CHECK_TRUE(std::find(names.begin(), names.end(), "tool_b") != names.end());
+    }});
+
+    tests.push_back({"ToolFiltering_ByPermission", []() {
+        ToolManager manager;
+        
+        ToolDefinition tool1 = createSimpleTool("public1", "Public 1");
+        tool1.permissionLevel = PermissionLevel::Public;
+        CHECK_TRUE(manager.registerTool(tool1));
+        
+        ToolDefinition tool2 = createSimpleTool("restricted1", "Restricted 1");
+        tool2.permissionLevel = PermissionLevel::Restricted;
+        CHECK_TRUE(manager.registerTool(tool2));
+        
+        ToolDefinition tool3 = createSimpleTool("public2", "Public 2");
+        tool3.permissionLevel = PermissionLevel::Public;
+        CHECK_TRUE(manager.registerTool(tool3));
+        
+        auto publicTools = manager.getToolsByPermission(PermissionLevel::Public);
+        CHECK_EQ(publicTools.size(), 2);
+        
+        auto restrictedTools = manager.getToolsByPermission(PermissionLevel::Restricted);
+        CHECK_EQ(restrictedTools.size(), 1);
+    }});
+
+    tests.push_back({"ToolFiltering_ByFilter", []() {
+        ToolManager manager;
+        
+        ToolDefinition tool1 = createSimpleTool("test_public", "Test Public");
+        tool1.permissionLevel = PermissionLevel::Public;
+        CHECK_TRUE(manager.registerTool(tool1));
+        
+        ToolDefinition tool2 = createSimpleTool("test_restricted", "Test Restricted");
+        tool2.permissionLevel = PermissionLevel::Restricted;
+        CHECK_TRUE(manager.registerTool(tool2));
+        
+        ToolDefinition tool3 = createSimpleTool("other_public", "Other Public");
+        tool3.permissionLevel = PermissionLevel::Public;
+        CHECK_TRUE(manager.registerTool(tool3));
+        
+        ToolFilter filter;
+        filter.namePrefix = "test_";
+        filter.permissionLevel = PermissionLevel::Public;
+        
+        auto filtered = manager.getFilteredTools(filter);
+        CHECK_EQ(filtered.size(), 1);
+        CHECK_EQ(filtered[0].name, "test_public");
+    }});
+
+    // ========== 新功能测试：参数验证增强 ==========
+
+    tests.push_back({"ParameterValidation_Enum", []() {
+        ToolManager manager;
+        
+        ToolDefinition tool;
+        tool.name = "enum_tool";
+        tool.description = "Tool with enum validation";
+        tool.parametersSchema = nlohmann::json{
+            {"type", "object"},
+            {"properties", {
+                {"status", {
+                    {"type", "string"},
+                    {"enum", {"active", "inactive", "pending"}}
+                }}
+            }},
+            {"required", {"status"}}
+        };
+        tool.handler = [](const nlohmann::json&) { return nlohmann::json{{"result", "ok"}}; };
+        
+        CHECK_TRUE(manager.registerTool(tool));
+        
+        // 有效值
+        nlohmann::json validArgs = {{"status", "active"}};
+        ErrorInfo error;
+        CHECK_TRUE(manager.validateArguments(tool, validArgs, &error));
+        
+        // 无效值
+        nlohmann::json invalidArgs = {{"status", "invalid"}};
+        CHECK_FALSE(manager.validateArguments(tool, invalidArgs, &error));
+    }});
+
+    tests.push_back({"ParameterValidation_Range", []() {
+        ToolManager manager;
+        
+        ToolDefinition tool;
+        tool.name = "range_tool";
+        tool.description = "Tool with range validation";
+        tool.parametersSchema = nlohmann::json{
+            {"type", "object"},
+            {"properties", {
+                {"age", {
+                    {"type", "integer"},
+                    {"minimum", 0},
+                    {"maximum", 120}
+                }},
+                {"score", {
+                    {"type", "number"},
+                    {"minimum", 0.0},
+                    {"maximum", 100.0}
+                }}
+            }},
+            {"required", {"age", "score"}}
+        };
+        tool.handler = [](const nlohmann::json&) { return nlohmann::json{{"result", "ok"}}; };
+        
+        CHECK_TRUE(manager.registerTool(tool));
+        
+        // 有效值
+        nlohmann::json validArgs = {{"age", 25}, {"score", 85.5}};
+        ErrorInfo error;
+        CHECK_TRUE(manager.validateArguments(tool, validArgs, &error));
+        
+        // 超出范围
+        nlohmann::json invalidArgs1 = {{"age", 150}, {"score", 85.5}};
+        CHECK_FALSE(manager.validateArguments(tool, invalidArgs1, &error));
+        
+        nlohmann::json invalidArgs2 = {{"age", 25}, {"score", 150.0}};
+        CHECK_FALSE(manager.validateArguments(tool, invalidArgs2, &error));
+    }});
+
+    tests.push_back({"ParameterValidation_StringLength", []() {
+        ToolManager manager;
+        
+        ToolDefinition tool;
+        tool.name = "length_tool";
+        tool.description = "Tool with string length validation";
+        tool.parametersSchema = nlohmann::json{
+            {"type", "object"},
+            {"properties", {
+                {"name", {
+                    {"type", "string"},
+                    {"minLength", 3},
+                    {"maxLength", 10}
+                }}
+            }},
+            {"required", {"name"}}
+        };
+        tool.handler = [](const nlohmann::json&) { return nlohmann::json{{"result", "ok"}}; };
+        
+        CHECK_TRUE(manager.registerTool(tool));
+        
+        // 有效值
+        nlohmann::json validArgs = {{"name", "test"}};
+        ErrorInfo error;
+        CHECK_TRUE(manager.validateArguments(tool, validArgs, &error));
+        
+        // 太短
+        nlohmann::json invalidArgs1 = {{"name", "ab"}};
+        CHECK_FALSE(manager.validateArguments(tool, invalidArgs1, &error));
+        
+        // 太长
+        nlohmann::json invalidArgs2 = {{"name", "this_is_too_long"}};
+        CHECK_FALSE(manager.validateArguments(tool, invalidArgs2, &error));
+    }});
+
+    // ========== 新功能测试：工具执行统计 ==========
+
+    tests.push_back({"ToolStatistics_Basic", []() {
+        ToolManager manager;
+        auto tool = createAddTool();
+        CHECK_TRUE(manager.registerTool(tool));
+        
+        // 执行工具
+        nlohmann::json args = {{"a", 1}, {"b", 2}};
+        for (int i = 0; i < 5; ++i) {
+            manager.executeTool("add", args);
+        }
+        
+        // 检查统计
+        auto stats = manager.getToolStats("add");
+        CHECK_TRUE(stats.has_value());
+        CHECK_EQ(stats->callCount, 5);
+        CHECK_TRUE(stats->averageExecutionTimeMs > 0.0);
+    }});
+
+    tests.push_back({"ToolStatistics_ErrorTracking", []() {
+        ToolManager manager;
+        
+        ToolDefinition errorTool;
+        errorTool.name = "error_tool";
+        errorTool.description = "Tool that throws errors";
+        errorTool.parametersSchema = nlohmann::json{
+            {"type", "object"},
+            {"properties", nlohmann::json::object()},
+            {"required", nlohmann::json::array()}
+        };
+        errorTool.handler = [](const nlohmann::json&) -> nlohmann::json {
+            throw std::runtime_error("Test error");
+        };
+        
+        CHECK_TRUE(manager.registerTool(errorTool));
+        
+        // 执行多次（会失败）
+        nlohmann::json args = {};
+        for (int i = 0; i < 3; ++i) {
+            manager.executeTool("error_tool", args);
+        }
+        
+        // 执行一次成功
+        ToolDefinition successTool = createSimpleTool("success_tool", "Success tool");
+        CHECK_TRUE(manager.registerTool(successTool));
+        manager.executeTool("success_tool", nlohmann::json{{"value", "test"}});
+        
+        // 检查统计
+        auto errorStats = manager.getToolStats("error_tool");
+        CHECK_TRUE(errorStats.has_value());
+        CHECK_EQ(errorStats->callCount, 3);
+        CHECK_EQ(errorStats->errorCount, 3);
+        CHECK_EQ(errorStats->errorRate, 1.0);
+        
+        auto successStats = manager.getToolStats("success_tool");
+        CHECK_TRUE(successStats.has_value());
+        CHECK_EQ(successStats->callCount, 1);
+        CHECK_EQ(successStats->errorCount, 0);
+        CHECK_EQ(successStats->errorRate, 0.0);
+    }});
+
+    tests.push_back({"ToolStatistics_Reset", []() {
+        ToolManager manager;
+        auto tool = createAddTool();
+        CHECK_TRUE(manager.registerTool(tool));
+        
+        // 执行工具
+        nlohmann::json args = {{"a", 1}, {"b", 2}};
+        manager.executeTool("add", args);
+        
+        // 检查统计存在
+        auto stats1 = manager.getToolStats("add");
+        CHECK_TRUE(stats1.has_value());
+        CHECK_EQ(stats1->callCount, 1);
+        
+        // 重置统计
+        manager.resetToolStats("add");
+        
+        // 检查统计已清除
+        auto stats2 = manager.getToolStats("add");
+        CHECK_FALSE(stats2.has_value());
+    }});
+
+    // ========== 新功能测试：ErrorHandler集成 ==========
+
+    tests.push_back({"ErrorHandler_Integration", []() {
+        ErrorHandler errorHandler;
+        ToolManager manager(&errorHandler);
+        
+        // 注册一个会抛出异常的工具
+        ToolDefinition errorTool;
+        errorTool.name = "error_tool";
+        errorTool.description = "Tool that throws errors";
+        errorTool.parametersSchema = nlohmann::json{
+            {"type", "object"},
+            {"properties", nlohmann::json::object()},
+            {"required", nlohmann::json::array()}
+        };
+        errorTool.handler = [](const nlohmann::json&) -> nlohmann::json {
+            throw std::runtime_error("Test error");
+        };
+        
+        CHECK_TRUE(manager.registerTool(errorTool));
+        
+        // 执行工具（应该失败，但会记录日志）
+        nlohmann::json args = nlohmann::json::object();  // 确保是有效的JSON对象
+        ErrorInfo error;
+        auto result = manager.executeTool("error_tool", args, &error);
+        
+        CHECK_FALSE(result.has_value());
+        CHECK_EQ(error.errorType, ErrorType::ServerError);
+        // ErrorHandler应该已经记录了日志（我们无法直接验证，但不会崩溃）
     }});
 
     return mini_test::run(tests);
