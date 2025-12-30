@@ -13,6 +13,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/RequestManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CacheManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ResponseHandler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ToolManager.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -26,6 +27,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/RequestManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CacheManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ResponseHandler.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -249,6 +251,17 @@ if(BUILD_TESTING)
     target_link_libraries(Phase4IntegrationTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient NAW_ServiceUtils)
     target_include_directories(Phase4IntegrationTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME Phase4IntegrationTest COMMAND Phase4IntegrationTest)
+
+    add_executable(ToolManagerTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ToolManagerTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ToolManagerTest PRIVATE /GL-)
+        target_link_options(ToolManagerTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ToolManagerTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(ToolManagerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME ToolManagerTest COMMAND ToolManagerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)

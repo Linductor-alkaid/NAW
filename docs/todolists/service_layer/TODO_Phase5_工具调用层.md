@@ -60,43 +60,43 @@ src/naw/desktop_pet/service/
 ### 5.1.3 详细任务清单
 
 #### 5.1.3.1 工具定义结构
-- [ ] **工具定义数据结构设计**
-  - [ ] 定义 `ToolDefinition` 结构体
-    - [ ] `name`（工具名称，唯一标识）
-    - [ ] `description`（工具描述，用于 Function Calling）
-    - [ ] `parametersSchema`（参数Schema，JSON Schema格式）
-    - [ ] `handler`（工具处理器函数：`std::function<nlohmann::json(const nlohmann::json&)>`）
+- [x] **工具定义数据结构设计**
+  - [x] 定义 `ToolDefinition` 结构体
+    - [x] `name`（工具名称，唯一标识）
+    - [x] `description`（工具描述，用于 Function Calling）
+    - [x] `parametersSchema`（参数Schema，JSON Schema格式）
+    - [x] `handler`（工具处理器函数：`std::function<nlohmann::json(const nlohmann::json&)>`）
   - [ ] 实现工具定义的序列化/反序列化（可选，用于配置化工具）
-  - [ ] 实现工具定义验证（名称非空、Schema有效等）
+  - [x] 实现工具定义验证（名称非空、Schema有效等）
 
-- [ ] **工具参数Schema定义**
-  - [ ] 支持 JSON Schema 格式（`type`、`properties`、`required` 等）
-  - [ ] 实现Schema验证（参数类型检查、必需字段检查）
-  - [ ] 支持复杂类型（`object`、`array`、`string`、`number`、`boolean`）
-  - [ ] 支持嵌套对象和数组
+- [x] **工具参数Schema定义**
+  - [x] 支持 JSON Schema 格式（`type`、`properties`、`required` 等）
+  - [x] 实现Schema验证（参数类型检查、必需字段检查）
+  - [x] 支持复杂类型（`object`、`array`、`string`、`number`、`boolean`）
+  - [x] 支持嵌套对象和数组
 
 **验收标准**：
 - 单测验证：工具定义结构能正确存储和检索。
 - 单测验证：参数Schema验证正确（类型检查、必需字段检查）。
 
 #### 5.1.3.2 工具注册机制
-- [ ] **工具注册接口**
-  - [ ] 实现 `registerTool(const ToolDefinition& tool)` 方法
-    - [ ] 验证工具定义有效性（名称非空、Handler非空）
-    - [ ] 检查工具名称是否已存在（可选：支持覆盖或拒绝）
-    - [ ] 验证参数Schema格式（使用JSON Schema验证）
-    - [ ] 将工具存储到内部映射（`toolName -> ToolDefinition`）
-    - [ ] 线程安全（使用 mutex 保护）
-  - [ ] 实现 `unregisterTool(const std::string& toolName)` 方法
-    - [ ] 检查工具是否存在
-    - [ ] 从映射中移除
-  - [ ] 实现批量注册接口（`registerTools(const std::vector<ToolDefinition>&)`，可选）
+- [x] **工具注册接口**
+  - [x] 实现 `registerTool(const ToolDefinition& tool)` 方法
+    - [x] 验证工具定义有效性（名称非空、Handler非空）
+    - [x] 检查工具名称是否已存在（可选：支持覆盖或拒绝）
+    - [x] 验证参数Schema格式（使用JSON Schema验证）
+    - [x] 将工具存储到内部映射（`toolName -> ToolDefinition`）
+    - [x] 线程安全（使用 mutex 保护）
+  - [x] 实现 `unregisterTool(const std::string& toolName)` 方法
+    - [x] 检查工具是否存在
+    - [x] 从映射中移除
+  - [x] 实现批量注册接口（`registerTools(const std::vector<ToolDefinition>&)`，可选）
 
-- [ ] **工具处理器注册**
-  - [ ] 支持函数指针注册（`std::function`）
-  - [ ] 支持 Lambda 表达式注册
-  - [ ] 支持成员函数注册（使用 `std::bind` 或 Lambda 包装）
-  - [ ] 处理器签名：`nlohmann::json handler(const nlohmann::json& arguments)`
+- [x] **工具处理器注册**
+  - [x] 支持函数指针注册（`std::function`）
+  - [x] 支持 Lambda 表达式注册
+  - [x] 支持成员函数注册（使用 `std::bind` 或 Lambda 包装）
+  - [x] 处理器签名：`nlohmann::json handler(const nlohmann::json& arguments)`
 
 - [ ] **工具权限控制（可选）**
   - [ ] 定义权限级别（`Public`、`Restricted`、`Admin` 等，可选）
@@ -109,20 +109,20 @@ src/naw/desktop_pet/service/
 - 单测验证：线程安全（并发注册/查询无竞态条件）。
 
 #### 5.1.3.3 工具查询
-- [ ] **按名称查询工具**
-  - [ ] 实现 `getTool(const std::string& toolName)` 方法
-    - [ ] 在映射中查找工具
-    - [ ] 返回工具定义的引用或可选值（`std::optional<ToolDefinition>`）
-    - [ ] 处理工具不存在的情况
-  - [ ] 实现 `hasTool(const std::string& toolName)` 方法
-    - [ ] 检查工具是否存在
-    - [ ] 返回布尔值
+- [x] **按名称查询工具**
+  - [x] 实现 `getTool(const std::string& toolName)` 方法
+    - [x] 在映射中查找工具
+    - [x] 返回工具定义的引用或可选值（`std::optional<ToolDefinition>`）
+    - [x] 处理工具不存在的情况
+  - [x] 实现 `hasTool(const std::string& toolName)` 方法
+    - [x] 检查工具是否存在
+    - [x] 返回布尔值
 
-- [ ] **列出所有工具**
-  - [ ] 实现 `getAllTools()` 方法
-    - [ ] 返回所有已注册工具的列表（`std::vector<ToolDefinition>`）
-  - [ ] 实现 `getToolNames()` 方法
-    - [ ] 返回所有工具名称列表（`std::vector<std::string>`）
+- [x] **列出所有工具**
+  - [x] 实现 `getAllTools()` 方法
+    - [x] 返回所有已注册工具的列表（`std::vector<ToolDefinition>`）
+  - [x] 实现 `getToolNames()` 方法
+    - [x] 返回所有工具名称列表（`std::vector<std::string>`）
   - [ ] 实现工具过滤（按名称前缀、按权限等，可选）
 
 - [ ] **工具查询统计**
@@ -134,35 +134,35 @@ src/naw/desktop_pet/service/
 - 单测验证：列表接口返回所有已注册工具。
 
 #### 5.1.3.4 工具执行
-- [ ] **参数验证**
-  - [ ] 实现 `validateArguments(const ToolDefinition& tool, const nlohmann::json& arguments)` 方法
-    - [ ] 检查必需字段是否存在
-    - [ ] 检查字段类型是否正确（使用JSON Schema验证）
+- [x] **参数验证**
+  - [x] 实现 `validateArguments(const ToolDefinition& tool, const nlohmann::json& arguments)` 方法
+    - [x] 检查必需字段是否存在
+    - [x] 检查字段类型是否正确（使用JSON Schema验证）
     - [ ] 检查字段值是否在允许范围内（enum、range等）
-    - [ ] 返回验证结果（成功/失败 + 错误信息）
-  - [ ] 在工具执行前自动进行参数验证
-  - [ ] 验证失败时返回清晰的错误信息
+    - [x] 返回验证结果（成功/失败 + 错误信息）
+  - [x] 在工具执行前自动进行参数验证
+  - [x] 验证失败时返回清晰的错误信息
 
-- [ ] **工具调用**
-  - [ ] 实现 `executeTool(const std::string& toolName, const nlohmann::json& arguments)` 方法
-    - [ ] 查找工具定义
-    - [ ] 验证参数
-    - [ ] 调用工具处理器（`tool.handler(arguments)`）
-    - [ ] 捕获处理器异常
-    - [ ] 返回执行结果（`nlohmann::json`）
-  - [ ] 实现异常处理
-    - [ ] 捕获 `std::exception` 异常
-    - [ ] 返回错误信息（JSON格式：`{"error": "error message"}`）
-    - [ ] 记录错误日志
+- [x] **工具调用**
+  - [x] 实现 `executeTool(const std::string& toolName, const nlohmann::json& arguments)` 方法
+    - [x] 查找工具定义
+    - [x] 验证参数
+    - [x] 调用工具处理器（`tool.handler(arguments)`）
+    - [x] 捕获处理器异常
+    - [x] 返回执行结果（`nlohmann::json`）
+  - [x] 实现异常处理
+    - [x] 捕获 `std::exception` 异常
+    - [x] 返回错误信息（使用 `ErrorInfo` 结构）
+    - [ ] 记录错误日志（可选）
 
-- [ ] **结果返回**
-  - [ ] 工具执行结果统一为 JSON 格式
-  - [ ] 支持任意JSON结构（对象、数组、基本类型）
-  - [ ] 实现结果序列化（`nlohmann::json::dump()`）
+- [x] **结果返回**
+  - [x] 工具执行结果统一为 JSON 格式
+  - [x] 支持任意JSON结构（对象、数组、基本类型）
+  - [x] 实现结果序列化（`nlohmann::json::dump()`）
 
-- [ ] **错误处理**
-  - [ ] 定义工具执行错误类型（`ToolNotFoundError`、`InvalidArgumentsError`、`ExecutionError` 等）
-  - [ ] 实现错误分类和错误信息返回
+- [x] **错误处理**
+  - [x] 定义工具执行错误类型（通过 `ErrorType` 枚举：`InvalidRequest`、`ServerError` 等）
+  - [x] 实现错误分类和错误信息返回
   - [ ] 集成 `ErrorHandler` 进行统一错误处理（可选）
 
 - [ ] **工具执行统计（可选）**
@@ -978,13 +978,13 @@ src/naw/desktop_pet/service/
 ## 进度追踪
 
 ### 5.1 工具管理器（ToolManager）
-- [ ] 工具定义结构
-- [ ] 工具注册机制
-- [ ] 工具查询
-- [ ] 工具执行
-- [ ] 单元测试
+- [x] 工具定义结构
+- [x] 工具注册机制
+- [x] 工具查询
+- [x] 工具执行
+- [x] 单元测试
 
-**进度**: 0/5 主要模块完成
+**进度**: 5/5 主要模块完成 ✅
 
 ### 5.2 代码工具集（CodeTools）
 - [ ] read_file工具实现
@@ -1024,25 +1024,25 @@ src/naw/desktop_pet/service/
 **进度**: 0/5 主要模块完成
 
 ### 5.6 单元测试与示例
-- [ ] ToolManager测试
+- [x] ToolManager测试
 - [ ] CodeTools测试
 - [ ] FunctionCallingHandler测试
 - [ ] MCPService测试
 - [ ] ProjectContextCollector测试
 - [ ] 集成测试
 
-**进度**: 0/6 主要模块完成
+**进度**: 1/6 主要模块完成
 
 ---
 
 ## 总体进度
 
-**Phase 5 总体进度**: 0/27 主要模块完成
+**Phase 5 总体进度**: 6/27 主要模块完成
 
 **各模块完成情况**：
-- 5.1 工具管理器（ToolManager）: 0/5
+- 5.1 工具管理器（ToolManager）: 5/5 ✅
 - 5.2 代码工具集（CodeTools）: 0/7
 - 5.3 Function Calling处理器（FunctionCallingHandler）: 0/4
 - 5.4 MCP服务（MCPService）: 0/5
 - 5.5 项目上下文收集器（ProjectContextCollector）: 0/5
-- 5.6 单元测试与示例: 0/6
+- 5.6 单元测试与示例: 1/6
