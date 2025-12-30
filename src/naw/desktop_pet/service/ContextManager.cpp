@@ -1,6 +1,8 @@
 #include "naw/desktop_pet/service/ContextManager.h"
 
 #include "naw/desktop_pet/service/ErrorHandler.h"
+#include "naw/desktop_pet/service/ToolManager.h"
+#include "naw/desktop_pet/service/types/RequestResponse.h"
 #include "naw/desktop_pet/service/types/TaskType.h"
 
 #include <algorithm>
@@ -531,6 +533,35 @@ std::string ContextManager::getSystemPromptTemplate(types::TaskType taskType) co
         default:
             return "You are a helpful AI assistant. Provide accurate, helpful, and friendly responses.";
     }
+}
+
+// ========== 工具与LLM集成 ==========
+
+void ContextManager::setToolManager(ToolManager* toolManager) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_toolManager = toolManager;
+}
+
+bool ContextManager::populateToolsToRequest(
+    types::ChatRequest& request,
+    const ToolFilter& filter,
+    const std::string& toolChoice,
+    ErrorInfo* error
+) {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 如果未设置工具管理器，返回false
+    if (m_toolManager == nullptr) {
+        if (error) {
+            error->errorType = ErrorType::InvalidRequest;
+            error->errorCode = 400;
+            error->message = "ToolManager not set in ContextManager";
+        }
+        return false;
+    }
+    
+    // 调用ToolManager的populateToolsToRequest方法
+    return m_toolManager->populateToolsToRequest(request, filter, toolChoice, error);
 }
 
 } // namespace naw::desktop_pet::service

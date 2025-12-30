@@ -17,6 +17,10 @@ namespace naw::desktop_pet::service {
 // 前向声明
 class ErrorHandler;
 
+namespace types {
+    struct ChatRequest;
+}
+
 /**
  * @brief 工具权限级别
  */
@@ -164,6 +168,37 @@ public:
      *         每个元素格式：{"type": "function", "function": {"name": "...", "description": "...", "parameters": {...}}}
      */
     std::vector<nlohmann::json> getToolsForAPI() const;
+
+    /**
+     * @brief 获取过滤后的工具列表（转换为OpenAI Function Calling格式）
+     * 
+     * 根据过滤条件获取工具，并转换为OpenAI兼容的Function Calling格式。
+     * 
+     * @param filter 工具过滤条件
+     * @return OpenAI Function Calling格式的工具列表
+     */
+    std::vector<nlohmann::json> getToolsForAPI(const ToolFilter& filter) const;
+
+    // ========== 工具与LLM集成 ==========
+
+    /**
+     * @brief 将工具列表填充到ChatRequest
+     * 
+     * 从ToolManager获取工具列表，应用过滤条件，并填充到ChatRequest的tools字段。
+     * 同时设置toolChoice字段，支持工具选择策略。
+     * 
+     * @param request 要填充的ChatRequest对象（会被修改）
+     * @param filter 工具过滤条件（可选，默认不过滤）
+     * @param toolChoice 工具选择策略："auto"（默认，让LLM自动决定）、"none"（不调用工具）、特定工具名（强制调用指定工具）
+     * @param error 如果填充失败，输出错误信息（可选）
+     * @return 如果成功返回 true，否则返回 false
+     */
+    bool populateToolsToRequest(
+        types::ChatRequest& request,
+        const ToolFilter& filter = {},
+        const std::string& toolChoice = "auto",
+        ErrorInfo* error = nullptr
+    ) const;
 
     /**
      * @brief 获取已注册工具的数量

@@ -2,7 +2,9 @@
 
 #include "naw/desktop_pet/service/ConfigManager.h"
 #include "naw/desktop_pet/service/ErrorTypes.h"
+#include "naw/desktop_pet/service/ToolManager.h"
 #include "naw/desktop_pet/service/types/ChatMessage.h"
+#include "naw/desktop_pet/service/types/RequestResponse.h"
 #include "naw/desktop_pet/service/types/TaskType.h"
 #include "naw/desktop_pet/service/utils/TokenCounter.h"
 
@@ -267,6 +269,33 @@ public:
      */
     ContextConfig getConfig() const { return m_config; }
 
+    // ========== 工具与LLM集成 ==========
+
+    /**
+     * @brief 设置工具管理器（用于Function Calling）
+     * @param toolManager 工具管理器指针（可以为 nullptr，表示不使用工具）
+     */
+    void setToolManager(ToolManager* toolManager);
+
+    /**
+     * @brief 将工具列表填充到ChatRequest
+     * 
+     * 如果设置了工具管理器，从ToolManager获取工具列表并填充到ChatRequest。
+     * 这是一个便捷方法，内部调用ToolManager::populateToolsToRequest()。
+     * 
+     * @param request 要填充的ChatRequest对象（会被修改）
+     * @param filter 工具过滤条件（可选，默认不过滤）
+     * @param toolChoice 工具选择策略："auto"（默认）、"none"、特定工具名
+     * @param error 如果填充失败，输出错误信息（可选）
+     * @return 如果成功返回 true，否则返回 false（如果未设置工具管理器，返回 false）
+     */
+    bool populateToolsToRequest(
+        types::ChatRequest& request,
+        const ToolFilter& filter = {},
+        const std::string& toolChoice = "auto",
+        ErrorInfo* error = nullptr
+    );
+
 private:
     ConfigManager& m_configManager;
     mutable std::mutex m_mutex;
@@ -279,6 +308,9 @@ private:
 
     // Token估算器
     utils::TokenEstimator m_tokenEstimator;
+
+    // 工具管理器（可选，用于Function Calling）
+    ToolManager* m_toolManager{nullptr};
 
     // 内部方法
     /**

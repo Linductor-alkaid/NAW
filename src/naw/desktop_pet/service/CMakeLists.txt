@@ -290,6 +290,17 @@ if(BUILD_TESTING)
     target_link_libraries(FunctionCallingHandlerTest PRIVATE NAW_ServiceFoundation)
     target_include_directories(FunctionCallingHandlerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME FunctionCallingHandlerTest COMMAND FunctionCallingHandlerTest)
+
+    add_executable(ToolLLMIntegrationTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ToolLLMIntegrationTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ToolLLMIntegrationTest PRIVATE /GL-)
+        target_link_options(ToolLLMIntegrationTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ToolLLMIntegrationTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(ToolLLMIntegrationTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME ToolLLMIntegrationTest COMMAND ToolLLMIntegrationTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)

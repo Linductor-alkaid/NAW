@@ -1,6 +1,7 @@
 #include "naw/desktop_pet/service/ToolManager.h"
 
 #include "naw/desktop_pet/service/ErrorHandler.h"
+#include "naw/desktop_pet/service/types/RequestResponse.h"
 
 #include <algorithm>
 #include <chrono>
@@ -225,6 +226,30 @@ std::vector<nlohmann::json> ToolManager::getToolsForAPI() const {
         
         // 转换为OpenAI Function Calling格式
         // 格式参考：https://docs.siliconflow.cn/cn/userguide/guides/function-calling
+        nlohmann::json toolJson = nlohmann::json{
+            {"type", "function"},
+            {"function", {
+                {"name", tool.name},
+                {"description", tool.description},
+                {"parameters", tool.parametersSchema}
+            }}
+        };
+        
+        result.push_back(std::move(toolJson));
+    }
+    
+    return result;
+}
+
+std::vector<nlohmann::json> ToolManager::getToolsForAPI(const ToolFilter& filter) const {
+    // 获取过滤后的工具列表
+    auto filteredTools = getFilteredTools(filter);
+    
+    // 转换为OpenAI Function Calling格式
+    std::vector<nlohmann::json> result;
+    result.reserve(filteredTools.size());
+    
+    for (const auto& tool : filteredTools) {
         nlohmann::json toolJson = nlohmann::json{
             {"type", "function"},
             {"function", {
@@ -786,6 +811,58 @@ void ToolManager::resetToolStats(const std::string& toolName) {
 void ToolManager::setErrorHandler(ErrorHandler* errorHandler) {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_errorHandler = errorHandler;
+}
+
+// ========== 工具与LLM集成 ==========
+
+bool ToolManager::populateToolsToRequest(
+    types::ChatRequest& request,
+    const ToolFilter& filter,
+    const std::string& toolChoice,
+    ErrorInfo* error
+) const {
+    // 验证toolChoice参数
+    if (toolChoice != "auto" && toolChoice != "none" && !toolChoice.empty()) {
+        // 如果指定了特定工具名，验证工具是否存在
+        if (!hasTool(toolChoice)) {
+            if (error) {
+                error->errorType = ErrorType::InvalidRequest;
+                error->errorCode = 404;
+                error->message = "Tool not found: " + toolChoice;
+            }
+            return false;
+        }
+    }
+
+    // 获取工具列表（应用过滤条件）
+    std::vector<nlohmann::json> tools;
+    if (filter.namePrefix.has_value() || filter.permissionLevel.has_value()) {
+        // 使用过滤条件
+        tools = getToolsForAPI(filter);
+    } else {
+        // 获取所有工具
+        tools = getToolsForAPI();
+    }
+
+    // 填充工具列表到请求
+    request.tools = std::move(tools);
+
+    // 设置工具选择策略
+    // 注意：根据ChatRequest的定义，toolChoice是std::optional<std::string>类型
+    // 对于特定工具名，直接使用工具名作为字符串（简化实现）
+    // 如果需要完整的OpenAI格式（对象形式），需要在toJson()方法中特殊处理
+    if (toolChoice == "none") {
+        request.toolChoice = "none";
+    } else if (!toolChoice.empty() && toolChoice != "auto") {
+        // 特定工具名：直接使用工具名（简化实现）
+        // 注意：这可能需要后续扩展以支持完整的OpenAI对象格式
+        request.toolChoice = toolChoice;
+    } else {
+        // "auto" 或空字符串：让LLM自动决定
+        request.toolChoice = "auto";
+    }
+
+    return true;
 }
 
 } // namespace naw::desktop_pet::service
