@@ -1,0 +1,1048 @@
+# Phase 5：工具调用层（Tool Calling Layer）详细任务清单
+
+本文档是阶段五工具调用层的详细开发任务清单，基于《服务层设计方案》制定，并以 Phase1、Phase2、Phase3、Phase4 已完成的基础设施层、API 客户端层、核心管理层和服务管理层为依赖。
+
+> **参考信息**：
+> - 设计方案：`docs/design/服务层设计方案.md`
+> - Phase1 详细清单：`docs/todolists/service_layer/TODO_Phase1_基础设施层.md`
+> - Phase2 详细清单：`docs/todolists/service_layer/TODO_Phase2_API客户端层.md`
+> - Phase3 详细清单：`docs/todolists/service_layer/TODO_Phase3_核心管理层.md`
+> - Phase4 详细清单：`docs/todolists/service_layer/TODO_Phase4_服务管理层.md`
+> - 总体任务清单：`docs/todolists/TODO_服务层开发任务清单.md`
+
+## 概述
+
+### 目标
+- 实现 **工具管理器（ToolManager）**：管理所有可用工具，支持工具注册、查询和执行，为 Function Calling 提供基础支持。
+- 实现 **代码工具集（CodeTools）**：提供代码开发相关的标准工具（read_file、list_files、search_code、get_project_structure、analyze_code等）。
+- 实现 **Function Calling处理器（FunctionCallingHandler）**：处理LLM返回的工具调用请求，执行工具并构建后续请求。
+- 实现 **MCP服务（MCPService）**：实现 Model Context Protocol 协议，提供标准化的工具接口和项目上下文访问。
+- 实现 **项目上下文收集器（ProjectContextCollector）**：分析项目结构，收集项目信息，为LLM提供项目上下文。
+
+### 非目标（明确留到后续Phase）
+- 多模态服务（Phase6）。
+- 服务层主接口整合（Phase7）。
+
+### 依赖与关键组件（Phase5 前置）
+- [x] Phase1 已提供：
+  - `ConfigManager`：配置文件加载和环境变量支持。
+  - `types::TaskType`、`types::ChatRequest`、`types::ChatResponse`、`types::ToolCall` 等基础数据结构。
+  - `ErrorHandler`：统一错误处理和重试策略。
+  - `utils::TokenCounter`：Token计数工具。
+- [x] Phase2 已提供：
+  - `APIClient`：同步/异步/流式 API 调用能力，支持 Function Calling 请求和响应。
+  - `types::Tool`、`types::ToolCall`：工具定义和工具调用数据结构。
+- [x] Phase3 已提供：
+  - `ModelManager`：模型配置和性能统计。
+  - `TaskRouter`：任务路由和模型选择。
+  - `ContextManager`：上下文构建和管理。
+- [x] Phase4 已提供：
+  - `RequestManager`：请求队列管理和并发控制。
+  - `ResponseHandler`：响应处理和验证。
+  - `CacheManager`：响应缓存管理。
+
+---
+
+## 5.1 工具管理器（ToolManager）
+
+### 5.1.1 任务概述
+实现工具的统一管理，包括工具注册、查询和执行，为 Function Calling 提供基础支持。工具管理器是所有工具的执行入口，负责工具定义的管理和工具调用的分发。
+
+### 5.1.2 文件结构（建议）
+```
+include/naw/desktop_pet/service/
+└── ToolManager.h
+
+src/naw/desktop_pet/service/
+└── ToolManager.cpp
+```
+
+### 5.1.3 详细任务清单
+
+#### 5.1.3.1 工具定义结构
+- [ ] **工具定义数据结构设计**
+  - [ ] 定义 `ToolDefinition` 结构体
+    - [ ] `name`（工具名称，唯一标识）
+    - [ ] `description`（工具描述，用于 Function Calling）
+    - [ ] `parametersSchema`（参数Schema，JSON Schema格式）
+    - [ ] `handler`（工具处理器函数：`std::function<nlohmann::json(const nlohmann::json&)>`）
+  - [ ] 实现工具定义的序列化/反序列化（可选，用于配置化工具）
+  - [ ] 实现工具定义验证（名称非空、Schema有效等）
+
+- [ ] **工具参数Schema定义**
+  - [ ] 支持 JSON Schema 格式（`type`、`properties`、`required` 等）
+  - [ ] 实现Schema验证（参数类型检查、必需字段检查）
+  - [ ] 支持复杂类型（`object`、`array`、`string`、`number`、`boolean`）
+  - [ ] 支持嵌套对象和数组
+
+**验收标准**：
+- 单测验证：工具定义结构能正确存储和检索。
+- 单测验证：参数Schema验证正确（类型检查、必需字段检查）。
+
+#### 5.1.3.2 工具注册机制
+- [ ] **工具注册接口**
+  - [ ] 实现 `registerTool(const ToolDefinition& tool)` 方法
+    - [ ] 验证工具定义有效性（名称非空、Handler非空）
+    - [ ] 检查工具名称是否已存在（可选：支持覆盖或拒绝）
+    - [ ] 验证参数Schema格式（使用JSON Schema验证）
+    - [ ] 将工具存储到内部映射（`toolName -> ToolDefinition`）
+    - [ ] 线程安全（使用 mutex 保护）
+  - [ ] 实现 `unregisterTool(const std::string& toolName)` 方法
+    - [ ] 检查工具是否存在
+    - [ ] 从映射中移除
+  - [ ] 实现批量注册接口（`registerTools(const std::vector<ToolDefinition>&)`，可选）
+
+- [ ] **工具处理器注册**
+  - [ ] 支持函数指针注册（`std::function`）
+  - [ ] 支持 Lambda 表达式注册
+  - [ ] 支持成员函数注册（使用 `std::bind` 或 Lambda 包装）
+  - [ ] 处理器签名：`nlohmann::json handler(const nlohmann::json& arguments)`
+
+- [ ] **工具权限控制（可选）**
+  - [ ] 定义权限级别（`Public`、`Restricted`、`Admin` 等，可选）
+  - [ ] 在工具定义中添加权限字段（可选）
+  - [ ] 实现权限检查接口（`checkPermission(const std::string& toolName, PermissionLevel level)`，可选）
+
+**验收标准**：
+- 单测验证：工具注册后能正确查询。
+- 单测验证：重复注册时行为正确（覆盖或拒绝）。
+- 单测验证：线程安全（并发注册/查询无竞态条件）。
+
+#### 5.1.3.3 工具查询
+- [ ] **按名称查询工具**
+  - [ ] 实现 `getTool(const std::string& toolName)` 方法
+    - [ ] 在映射中查找工具
+    - [ ] 返回工具定义的引用或可选值（`std::optional<ToolDefinition>`）
+    - [ ] 处理工具不存在的情况
+  - [ ] 实现 `hasTool(const std::string& toolName)` 方法
+    - [ ] 检查工具是否存在
+    - [ ] 返回布尔值
+
+- [ ] **列出所有工具**
+  - [ ] 实现 `getAllTools()` 方法
+    - [ ] 返回所有已注册工具的列表（`std::vector<ToolDefinition>`）
+  - [ ] 实现 `getToolNames()` 方法
+    - [ ] 返回所有工具名称列表（`std::vector<std::string>`）
+  - [ ] 实现工具过滤（按名称前缀、按权限等，可选）
+
+- [ ] **工具查询统计**
+  - [ ] 实现工具使用统计（调用次数、最后调用时间等，可选）
+  - [ ] 实现工具性能统计（平均执行时间、错误率等，可选）
+
+**验收标准**：
+- 单测验证：工具查询接口返回正确结果。
+- 单测验证：列表接口返回所有已注册工具。
+
+#### 5.1.3.4 工具执行
+- [ ] **参数验证**
+  - [ ] 实现 `validateArguments(const ToolDefinition& tool, const nlohmann::json& arguments)` 方法
+    - [ ] 检查必需字段是否存在
+    - [ ] 检查字段类型是否正确（使用JSON Schema验证）
+    - [ ] 检查字段值是否在允许范围内（enum、range等）
+    - [ ] 返回验证结果（成功/失败 + 错误信息）
+  - [ ] 在工具执行前自动进行参数验证
+  - [ ] 验证失败时返回清晰的错误信息
+
+- [ ] **工具调用**
+  - [ ] 实现 `executeTool(const std::string& toolName, const nlohmann::json& arguments)` 方法
+    - [ ] 查找工具定义
+    - [ ] 验证参数
+    - [ ] 调用工具处理器（`tool.handler(arguments)`）
+    - [ ] 捕获处理器异常
+    - [ ] 返回执行结果（`nlohmann::json`）
+  - [ ] 实现异常处理
+    - [ ] 捕获 `std::exception` 异常
+    - [ ] 返回错误信息（JSON格式：`{"error": "error message"}`）
+    - [ ] 记录错误日志
+
+- [ ] **结果返回**
+  - [ ] 工具执行结果统一为 JSON 格式
+  - [ ] 支持任意JSON结构（对象、数组、基本类型）
+  - [ ] 实现结果序列化（`nlohmann::json::dump()`）
+
+- [ ] **错误处理**
+  - [ ] 定义工具执行错误类型（`ToolNotFoundError`、`InvalidArgumentsError`、`ExecutionError` 等）
+  - [ ] 实现错误分类和错误信息返回
+  - [ ] 集成 `ErrorHandler` 进行统一错误处理（可选）
+
+- [ ] **工具执行统计（可选）**
+  - [ ] 记录工具调用次数
+  - [ ] 记录工具执行时间
+  - [ ] 记录工具执行错误次数
+
+**验收标准**：
+- 单测验证：参数验证正确（必需字段、类型检查）。
+- 单测验证：工具执行成功时返回正确结果。
+- 单测验证：工具执行失败时返回正确错误信息。
+- 单测验证：参数验证失败时返回清晰错误信息。
+
+---
+
+## 5.2 代码工具集（CodeTools）
+
+### 5.2.1 任务概述
+实现代码开发相关的标准工具，包括文件读取、文件列表、代码搜索、项目结构分析和代码分析等。这些工具为LLM提供代码操作能力，是代码开发辅助功能的基础。
+
+### 5.2.2 文件结构（建议）
+```
+include/naw/desktop_pet/service/
+└── CodeTools.h
+
+src/naw/desktop_pet/service/
+└── CodeTools.cpp
+```
+
+### 5.2.3 详细任务清单
+
+#### 5.2.3.1 read_file工具实现
+- [ ] **文件读取基础功能**
+  - [ ] 实现文件读取逻辑（使用 `std::ifstream` 或平台API）
+  - [ ] 支持文本文件读取（UTF-8编码）
+  - [ ] 处理文件不存在错误
+  - [ ] 处理文件读取权限错误
+  - [ ] 处理文件过大错误（设置最大文件大小限制）
+
+- [ ] **行范围支持**
+  - [ ] 实现行范围参数解析（`startLine`、`endLine`）
+  - [ ] 实现行范围提取逻辑
+    - [ ] 支持单行提取（`startLine == endLine`）
+    - [ ] 支持多行提取（`startLine < endLine`）
+    - [ ] 处理边界情况（超出文件范围、负数等）
+  - [ ] 返回行范围内容（包含行号信息，可选）
+
+- [ ] **错误处理**
+  - [ ] 文件不存在时返回错误信息
+  - [ ] 文件读取失败时返回错误信息
+  - [ ] 行范围无效时返回错误信息
+  - [ ] 返回标准错误格式（JSON格式）
+
+- [ ] **返回结果格式**
+  - [ ] 定义返回JSON结构
+    - [ ] `content`（文件内容或行范围内容）
+    - [ ] `path`（文件路径）
+    - [ ] `line_count`（总行数）
+    - [ ] `start_line`（起始行，如果指定了行范围）
+    - [ ] `end_line`（结束行，如果指定了行范围）
+
+- [ ] **工具注册**
+  - [ ] 实现 `registerReadFileTool(ToolManager& toolManager)` 静态方法
+  - [ ] 定义工具参数Schema
+    - [ ] `path`（必需，文件路径）
+    - [ ] `start_line`（可选，起始行号，从1开始）
+    - [ ] `end_line`（可选，结束行号）
+  - [ ] 注册到 `ToolManager`
+
+**验收标准**：
+- 单测验证：读取完整文件成功。
+- 单测验证：读取指定行范围成功。
+- 单测验证：文件不存在时返回错误。
+- 单测验证：无效行范围时返回错误。
+
+#### 5.2.3.2 list_files工具实现
+- [ ] **目录遍历**
+  - [ ] 实现目录遍历逻辑（使用 `std::filesystem`）
+  - [ ] 支持相对路径和绝对路径
+  - [ ] 处理目录不存在错误
+  - [ ] 处理目录访问权限错误
+
+- [ ] **文件过滤**
+  - [ ] 实现文件模式匹配（如 `*.cpp`、`*.h`）
+  - [ ] 支持通配符匹配（`*`、`?` 等）
+  - [ ] 支持正则表达式匹配（可选）
+  - [ ] 支持文件类型过滤（通过扩展名）
+
+- [ ] **递归选项**
+  - [ ] 实现递归遍历参数（`recursive` 布尔值）
+  - [ ] 支持单层遍历（非递归）
+  - [ ] 支持递归遍历（遍历所有子目录）
+  - [ ] 处理循环链接（避免无限递归）
+
+- [ ] **返回结果格式**
+  - [ ] 定义返回JSON结构
+    - [ ] `files`（文件路径列表）
+    - [ ] `directories`（目录路径列表，可选）
+    - [ ] `count`（文件数量）
+    - [ ] `total_size`（总大小，字节，可选）
+
+- [ ] **工具注册**
+  - [ ] 实现 `registerListFilesTool(ToolManager& toolManager)` 静态方法
+  - [ ] 定义工具参数Schema
+    - [ ] `directory`（可选，目录路径，默认为当前目录）
+    - [ ] `pattern`（可选，文件匹配模式，如 `*.cpp`）
+    - [ ] `recursive`（可选，是否递归，默认false）
+  - [ ] 注册到 `ToolManager`
+
+**验收标准**：
+- 单测验证：列出目录文件成功。
+- 单测验证：文件过滤正确（模式匹配）。
+- 单测验证：递归遍历正确。
+- 单测验证：目录不存在时返回错误。
+
+#### 5.2.3.3 search_code工具实现
+- [ ] **文本搜索**
+  - [ ] 实现文本搜索逻辑（逐文件搜索）
+  - [ ] 支持精确匹配搜索
+  - [ ] 支持大小写敏感/不敏感搜索（`case_sensitive` 参数）
+  - [ ] 支持多文件搜索（遍历目录）
+
+- [ ] **正则表达式支持**
+  - [ ] 实现正则表达式搜索（使用 `std::regex` 或第三方库）
+  - [ ] 支持标准正则表达式语法
+  - [ ] 处理正则表达式编译错误（无效正则）
+  - [ ] 提供正则表达式和文本搜索的统一接口
+
+- [ ] **文件类型过滤**
+  - [ ] 支持按文件扩展名过滤（`file_pattern` 参数）
+  - [ ] 支持多种文件类型（如 `*.cpp,*.h`）
+  - [ ] 在搜索前先进行文件过滤（性能优化）
+
+- [ ] **返回结果格式**
+  - [ ] 定义返回JSON结构
+    - [ ] `matches`（匹配结果列表）
+      - [ ] `file`（文件路径）
+      - [ ] `line`（行号）
+      - [ ] `column`（列号，可选）
+      - [ ] `context`（匹配行上下文，可选）
+    - [ ] `total_matches`（总匹配数）
+    - [ ] `files_searched`（搜索的文件数）
+
+- [ ] **工具注册**
+  - [ ] 实现 `registerSearchCodeTool(ToolManager& toolManager)` 静态方法
+  - [ ] 定义工具参数Schema
+    - [ ] `query`（必需，搜索查询文本或正则表达式）
+    - [ ] `directory`（可选，搜索目录，默认为当前目录）
+    - [ ] `file_pattern`（可选，文件类型过滤，如 `*.cpp`）
+    - [ ] `case_sensitive`（可选，是否区分大小写，默认false）
+  - [ ] 注册到 `ToolManager`
+
+**验收标准**：
+- 单测验证：文本搜索正确（精确匹配）。
+- 单测验证：正则表达式搜索正确。
+- 单测验证：文件类型过滤正确。
+- 单测验证：大小写敏感/不敏感搜索正确。
+
+#### 5.2.3.4 get_project_structure工具实现
+- [ ] **项目结构分析**
+  - [ ] 实现项目根目录识别（查找 `.git`、`CMakeLists.txt` 等标识）
+  - [ ] 实现目录结构扫描（递归遍历）
+  - [ ] 识别项目类型（C++、Python等，通过配置文件）
+  - [ ] 提取目录树结构
+
+- [ ] **CMake解析**
+  - [ ] 实现 `CMakeLists.txt` 文件解析
+    - [ ] 解析项目名称（`project()`）
+    - [ ] 解析源文件列表（`add_executable()`、`add_library()`）
+    - [ ] 解析依赖关系（`target_link_libraries()`、`find_package()`）
+    - [ ] 解析编译选项（`target_compile_options()`）
+  - [ ] 处理CMake解析错误（语法错误、文件不存在等）
+  - [ ] 支持简单的CMake语法（不完全解析，提取关键信息）
+
+- [ ] **依赖关系提取**
+  - [ ] 从CMake配置提取依赖库
+  - [ ] 从源码提取 `#include` 依赖（可选）
+  - [ ] 构建依赖关系图（可选）
+  - [ ] 返回依赖列表
+
+- [ ] **返回结果格式**
+  - [ ] 定义返回JSON结构
+    - [ ] `project_name`（项目名称）
+    - [ ] `root_path`（项目根路径）
+    - [ ] `structure`（目录结构树）
+    - [ ] `source_files`（源文件列表）
+    - [ ] `header_files`（头文件列表）
+    - [ ] `cmake_config`（CMake配置信息，可选）
+    - [ ] `dependencies`（依赖列表，可选）
+
+- [ ] **工具注册**
+  - [ ] 实现 `registerGetProjectStructureTool(ToolManager& toolManager)` 静态方法
+  - [ ] 定义工具参数Schema
+    - [ ] `include_files`（可选，是否包含文件列表，默认true）
+    - [ ] `include_dependencies`（可选，是否包含依赖关系，默认true）
+    - [ ] `project_root`（可选，项目根路径，默认自动检测）
+  - [ ] 注册到 `ToolManager`
+
+**验收标准**：
+- 单测验证：项目结构分析正确（目录树）。
+- 单测验证：CMake解析正确（项目名、源文件、依赖）。
+- 单测验证：依赖关系提取正确。
+- 单测验证：项目根目录自动识别正确。
+
+#### 5.2.3.5 analyze_code工具实现
+- [ ] **代码解析**
+  - [ ] 实现代码文件解析（C++、Python等，根据文件扩展名）
+  - [ ] 使用简单解析器或正则表达式（不依赖完整编译器）
+  - [ ] 提取代码结构信息
+
+- [ ] **函数/类提取**
+  - [ ] C++：提取函数定义（函数名、参数、返回类型）
+  - [ ] C++：提取类定义（类名、成员变量、成员函数）
+  - [ ] Python：提取函数定义和类定义
+  - [ ] 支持命名空间/模块（C++ `namespace`、Python `module`）
+  - [ ] 返回结构化信息（JSON格式）
+
+- [ ] **依赖分析**
+  - [ ] 提取 `#include` 语句（C++）
+  - [ ] 提取 `import` 语句（Python）
+  - [ ] 分析函数调用关系（可选，复杂）
+  - [ ] 分析类继承关系（可选，复杂）
+
+- [ ] **返回结果格式**
+  - [ ] 定义返回JSON结构
+    - [ ] `path`（文件路径）
+    - [ ] `language`（语言类型）
+    - [ ] `functions`（函数列表）
+      - [ ] `name`（函数名）
+      - [ ] `signature`（函数签名）
+      - [ ] `line`（定义行号）
+    - [ ] `classes`（类列表）
+      - [ ] `name`（类名）
+      - [ ] `line`（定义行号）
+      - [ ] `methods`（方法列表）
+    - [ ] `includes`（依赖列表，可选）
+
+- [ ] **工具注册**
+  - [ ] 实现 `registerAnalyzeCodeTool(ToolManager& toolManager)` 静态方法
+  - [ ] 定义工具参数Schema
+    - [ ] `path`（必需，代码文件路径）
+    - [ ] `analysis_type`（可选，分析类型：`functions`、`classes`、`dependencies`、`all`，默认`all`）
+  - [ ] 注册到 `ToolManager`
+
+- [ ] **统一工具注册接口**
+  - [ ] 实现 `CodeTools::registerAllTools(ToolManager& toolManager)` 静态方法
+    - [ ] 调用所有工具的注册方法
+    - [ ] 一次性注册所有代码工具
+
+**验收标准**：
+- 单测验证：函数提取正确（C++/Python）。
+- 单测验证：类提取正确（C++/Python）。
+- 单测验证：依赖分析正确（include/import）。
+- 单测验证：代码解析错误处理正确（无效语法等）。
+
+---
+
+## 5.3 Function Calling处理器（FunctionCallingHandler）
+
+### 5.3.1 任务概述
+处理LLM返回的工具调用请求，执行工具并构建包含工具结果的后续请求。这是连接LLM和工具管理器的桥梁，实现完整的Function Calling流程。
+
+### 5.3.2 文件结构（建议）
+```
+include/naw/desktop_pet/service/
+└── FunctionCallingHandler.h
+
+src/naw/desktop_pet/service/
+└── FunctionCallingHandler.cpp
+```
+
+### 5.3.3 详细任务清单
+
+#### 5.3.3.1 工具调用检测
+- [ ] **响应中工具调用识别**
+  - [ ] 实现 `hasToolCalls(const ChatResponse& response)` 方法
+    - [ ] 检查 `response.toolCalls` 是否非空
+    - [ ] 检查 `response.finishReason` 是否为 `"tool_calls"`
+    - [ ] 返回布尔值
+  - [ ] 实现 `extractToolCalls(const ChatResponse& response)` 方法
+    - [ ] 从响应中提取 `toolCalls` 列表
+    - [ ] 返回 `std::vector<ToolCall>` 或 `std::vector<types::ToolCall>`
+    - [ ] 处理空列表情况
+
+- [ ] **工具调用参数提取**
+  - [ ] 实现 `parseToolCallArguments(const ToolCall& toolCall)` 方法
+    - [ ] 从 `toolCall.function.arguments` 提取参数（JSON字符串或JSON对象）
+    - [ ] 解析JSON参数（`nlohmann::json::parse()`）
+    - [ ] 处理JSON解析错误
+    - [ ] 返回 `nlohmann::json` 对象
+  - [ ] 实现参数验证（使用 `ToolManager::validateArguments()`）
+
+- [ ] **工具调用结构验证**
+  - [ ] 验证工具调用ID是否存在（`toolCall.id`）
+  - [ ] 验证工具名称是否存在（`toolCall.function.name`）
+  - [ ] 验证参数格式（JSON格式）
+  - [ ] 返回验证结果
+
+**验收标准**：
+- 单测验证：工具调用识别正确（有/无工具调用）。
+- 单测验证：工具调用参数提取正确（JSON解析）。
+- 单测验证：参数验证正确（无效参数时返回错误）。
+
+#### 5.3.3.2 工具调用执行流程
+- [ ] **批量工具调用处理**
+  - [ ] 定义 `FunctionCallResult` 结构体
+    - [ ] `toolCallId`（工具调用ID）
+    - [ ] `toolName`（工具名称）
+    - [ ] `result`（执行结果，`nlohmann::json`）
+    - [ ] `error`（错误信息，如果执行失败）
+    - [ ] `executionTimeMs`（执行时间，毫秒，可选）
+  - [ ] 实现 `executeToolCalls(const std::vector<ToolCall>& toolCalls, ToolManager& toolManager)` 方法
+    - [ ] 遍历所有工具调用
+    - [ ] 对每个工具调用执行以下步骤：
+      - [ ] 提取工具名称和参数
+      - [ ] 调用 `ToolManager::executeTool()` 执行工具
+      - [ ] 捕获执行异常
+      - [ ] 创建 `FunctionCallResult` 对象
+      - [ ] 添加到结果列表
+    - [ ] 返回 `std::vector<FunctionCallResult>`
+
+- [ ] **结果收集**
+  - [ ] 实现结果聚合逻辑
+    - [ ] 收集所有成功的结果
+    - [ ] 收集所有失败的结果（错误信息）
+  - [ ] 实现结果统计（成功数、失败数，可选）
+  - [ ] 处理部分失败情况（部分工具成功、部分失败）
+
+- [ ] **并发执行（可选）**
+  - [ ] 支持并发执行多个工具调用（使用 `std::async` 或线程池）
+  - [ ] 实现并发控制（最大并发数限制）
+  - [ ] 处理并发执行的异常和错误
+
+- [ ] **执行超时控制（可选）**
+  - [ ] 为每个工具调用设置超时时间
+  - [ ] 超时后取消工具执行（如果支持）
+  - [ ] 返回超时错误信息
+
+**验收标准**：
+- 单测验证：批量工具调用执行正确（所有工具成功）。
+- 单测验证：部分失败处理正确（部分工具失败）。
+- 单测验证：执行结果收集正确。
+
+#### 5.3.3.3 后续请求构建
+- [ ] **工具结果消息构建**
+  - [ ] 实现 `buildToolResultMessages(const std::vector<FunctionCallResult>& results)` 方法
+    - [ ] 遍历所有工具执行结果
+    - [ ] 对每个结果创建 `ChatMessage` 对象
+      - [ ] 设置 `role = "tool"`
+      - [ ] 设置 `name = result.toolName`
+      - [ ] 设置 `toolCallId = result.toolCallId`
+      - [ ] 设置 `content`：
+        - [ ] 成功时：`result.result.dump()`（JSON字符串）
+        - [ ] 失败时：`"错误: " + result.error`
+    - [ ] 返回 `std::vector<ChatMessage>`
+  - [ ] 实现消息格式验证（确保符合API要求）
+
+- [ ] **多轮对话支持**
+  - [ ] 实现 `buildFollowUpRequest(const std::vector<ChatMessage>& originalMessages, const std::vector<ChatMessage>& toolResults)` 方法
+    - [ ] 合并原始消息和工具结果消息
+    - [ ] 保持消息顺序（原始消息在前，工具结果在后）
+    - [ ] 创建新的 `ChatRequest` 对象
+    - [ ] 设置请求参数（模型、温度等，从原始请求继承或使用默认值）
+    - [ ] 返回 `ChatRequest`
+  - [ ] 支持多轮工具调用（工具调用 -> 工具结果 -> 再次工具调用）
+  - [ ] 实现轮数限制（避免无限循环，可选）
+
+- [ ] **请求参数继承**
+  - [ ] 从原始请求继承模型ID（`request.model`）
+  - [ ] 从原始请求继承温度等参数（`temperature`、`maxTokens` 等）
+  - [ ] 从原始请求继承工具列表（`tools`，如果支持）
+  - [ ] 从原始请求继承其他参数（`stop`、`topP` 等）
+
+- [ ] **工具调用上下文管理（可选）**
+  - [ ] 记录工具调用历史（用于调试和统计）
+  - [ ] 实现工具调用链追踪（哪次对话触发了哪些工具调用）
+  - [ ] 实现工具调用结果缓存（相同工具调用参数时复用结果，可选）
+
+**验收标准**：
+- 单测验证：工具结果消息构建正确（格式、内容）。
+- 单测验证：后续请求构建正确（消息合并、参数继承）。
+- 单测验证：多轮工具调用支持正确（多轮对话流程）。
+
+---
+
+## 5.4 MCP服务（MCPService）
+
+### 5.4.1 任务概述
+实现 Model Context Protocol (MCP) 协议，提供标准化的工具接口。MCP是一个开放标准，用于将语言模型与外部工具和数据源集成。本模块实现MCP Server，将ToolManager中的工具暴露为MCP工具。
+
+### 5.4.2 文件结构（建议）
+```
+include/naw/desktop_pet/service/
+└── MCPService.h
+
+src/naw/desktop_pet/service/
+└── MCPService.cpp
+```
+
+### 5.4.3 详细任务清单
+
+#### 5.4.3.1 MCP协议基础
+- [ ] **JSON-RPC消息格式**
+  - [ ] 定义 `MCPMessage` 结构体
+    - [ ] `jsonrpc`（版本，固定为 `"2.0"`）
+    - [ ] `id`（消息ID，请求/响应匹配）
+    - [ ] `method`（方法名，请求时使用）
+    - [ ] `params`（参数，JSON对象）
+    - [ ] `result`（结果，响应时使用）
+    - [ ] `error`（错误，响应时使用）
+  - [ ] 实现消息序列化（`toJson()` 方法）
+  - [ ] 实现消息反序列化（`fromJson()` 方法）
+
+- [ ] **消息序列化/反序列化**
+  - [ ] 实现 `serializeMessage(const MCPMessage& message)` 方法
+    - [ ] 将 `MCPMessage` 转换为 `nlohmann::json`
+    - [ ] 返回JSON字符串（`json.dump()`）
+  - [ ] 实现 `deserializeMessage(const std::string& jsonStr)` 方法
+    - [ ] 解析JSON字符串（`nlohmann::json::parse()`）
+    - [ ] 转换为 `MCPMessage` 对象
+    - [ ] 处理JSON解析错误
+    - [ ] 返回 `std::optional<MCPMessage>`
+
+- [ ] **消息ID生成**
+  - [ ] 实现消息ID生成（UUID或递增数字）
+  - [ ] 确保消息ID唯一性
+  - [ ] 支持请求/响应ID匹配
+
+- [ ] **错误处理**
+  - [ ] 定义MCP错误码（参考JSON-RPC标准）
+    - [ ] `-32700`：Parse error（JSON解析错误）
+    - [ ] `-32600`：Invalid Request（无效请求）
+    - [ ] `-32601`：Method not found（方法不存在）
+    - [ ] `-32602`：Invalid params（无效参数）
+    - [ ] `-32603`：Internal error（内部错误）
+  - [ ] 实现错误消息构建（`buildErrorResponse(id, code, message)`）
+
+**验收标准**：
+- 单测验证：消息序列化/反序列化正确。
+- 单测验证：错误消息格式正确。
+- 单测验证：消息ID生成唯一。
+
+#### 5.4.3.2 MCP Server实现
+- [ ] **Server初始化**
+  - [ ] 实现 `initialize(const std::string& projectRoot)` 方法
+    - [ ] 设置项目根路径
+    - [ ] 初始化 `ToolManager`（如果未提供）
+    - [ ] 注册标准工具（调用 `initializeStandardTools()`）
+  - [ ] 实现 `initializeStandardTools()` 方法
+    - [ ] 调用 `CodeTools::registerAllTools()` 注册代码工具
+    - [ ] 转换为MCP工具格式
+
+- [ ] **请求处理**
+  - [ ] 实现 `handleRequest(const MCPMessage& request)` 方法
+    - [ ] 解析请求方法名（`request.method`）
+    - [ ] 路由到相应处理方法：
+      - [ ] `"tools/list"` -> `handleListTools(request)`
+      - [ ] `"tools/call"` -> `handleCallTool(request)`
+      - [ ] 其他方法 -> 返回方法不存在错误
+    - [ ] 构建响应消息
+    - [ ] 返回响应（`nlohmann::json`）
+  - [ ] 实现请求验证（检查必需字段、参数格式等）
+
+- [ ] **工具列表接口**
+  - [ ] 实现 `handleListTools(const MCPMessage& request)` 方法
+    - [ ] 获取所有MCP工具（从 `m_tools` 或 `ToolManager`）
+    - [ ] 转换为MCP工具列表格式
+    - [ ] 构建响应消息
+    - [ ] 返回 `{"tools": [...]}`
+  - [ ] 实现 `listTools()` 公共接口（返回JSON格式的工具列表）
+
+- [ ] **工具调用接口**
+  - [ ] 实现 `handleCallTool(const MCPMessage& request)` 方法
+    - [ ] 从请求参数提取工具名称和参数（`params.name`、`params.arguments`）
+    - [ ] 调用 `callTool(name, arguments)` 执行工具
+    - [ ] 构建响应消息
+    - [ ] 返回工具执行结果
+  - [ ] 实现 `callTool(const std::string& toolName, const nlohmann::json& arguments)` 方法
+    - [ ] 查找MCP工具（从 `m_tools` 查找）
+    - [ ] 调用工具处理器（`tool.handler(arguments)`）
+    - [ ] 捕获执行异常
+    - [ ] 返回结果或错误
+
+- [ ] **错误处理**
+  - [ ] 实现统一的错误处理逻辑
+    - [ ] 捕获所有异常
+    - [ ] 转换为MCP错误响应
+    - [ ] 记录错误日志
+  - [ ] 实现参数验证错误处理
+  - [ ] 实现工具不存在错误处理
+  - [ ] 实现工具执行错误处理
+
+**验收标准**：
+- 单测验证：工具列表接口返回正确格式。
+- 单测验证：工具调用接口执行正确。
+- 单测验证：错误处理正确（方法不存在、参数错误等）。
+
+#### 5.4.3.3 MCP工具注册
+- [ ] **从ToolManager转换**
+  - [ ] 实现 `convertToolManagerToMCP(ToolManager& toolManager)` 方法
+    - [ ] 获取 `ToolManager` 中的所有工具（`getAllTools()`）
+    - [ ] 对每个工具转换为MCP工具格式
+    - [ ] 设置MCP工具的处理器（调用 `ToolManager::executeTool()`）
+    - [ ] 注册到MCP Server
+  - [ ] 实现工具格式转换逻辑
+    - [ ] `ToolDefinition.name` -> `MCPTool.name`
+    - [ ] `ToolDefinition.description` -> `MCPTool.description`
+    - [ ] `ToolDefinition.parametersSchema` -> `MCPTool.inputSchema`
+
+- [ ] **MCP工具格式适配**
+  - [ ] 定义 `MCPTool` 结构体
+    - [ ] `name`（工具名称）
+    - [ ] `description`（工具描述）
+    - [ ] `inputSchema`（输入参数Schema，JSON Schema格式）
+    - [ ] `handler`（工具处理器函数）
+  - [ ] 实现 `MCPTool` 与 `ToolDefinition` 的转换
+  - [ ] 确保Schema格式兼容（JSON Schema标准）
+
+- [ ] **工具注册接口**
+  - [ ] 实现 `registerTool(const MCPTool& tool)` 方法
+    - [ ] 验证工具定义有效性
+    - [ ] 检查工具名称是否已存在
+    - [ ] 存储到 `m_tools` 向量或映射
+    - [ ] 线程安全（使用 mutex 保护）
+  - [ ] 实现 `unregisterTool(const std::string& toolName)` 方法
+  - [ ] 实现 `getTool(const std::string& toolName)` 方法
+
+- [ ] **工具列表获取**
+  - [ ] 实现 `getAvailableTools()` 方法
+    - [ ] 返回所有已注册的MCP工具列表
+    - [ ] 转换为MCP协议格式（`{"tools": [...]}`）
+  - [ ] 实现工具过滤（按权限、按类型等，可选）
+
+**验收标准**：
+- 单测验证：ToolManager工具转换为MCP工具正确。
+- 单测验证：MCP工具注册和查询正确。
+- 单测验证：工具格式兼容性正确。
+
+#### 5.4.3.4 MCP与LLM集成
+- [ ] **MCP工具转Function Calling格式**
+  - [ ] 实现 `convertMCPToolsToFunctions(const std::vector<MCPTool>& mcpTools)` 方法
+    - [ ] 遍历所有MCP工具
+    - [ ] 对每个工具转换为Function Calling格式：
+      - [ ] 创建 `{"type": "function", "function": {...}}` 对象
+      - [ ] 设置 `function.name = tool.name`
+      - [ ] 设置 `function.description = tool.description`
+      - [ ] 设置 `function.parameters = tool.inputSchema`
+    - [ ] 返回 `std::vector<nlohmann::json>`（工具列表）
+  - [ ] 确保格式符合OpenAI Function Calling规范
+
+- [ ] **在API请求中包含MCP工具**
+  - [ ] 实现 `buildRequestWithMCPTools(const std::vector<ChatMessage>& messages, const std::vector<MCPTool>& tools)` 方法
+    - [ ] 转换MCP工具为Function Calling格式
+    - [ ] 创建 `ChatRequest` 对象
+    - [ ] 设置 `request.messages = messages`
+    - [ ] 设置 `request.tools = convertedTools`
+    - [ ] 设置 `request.toolChoice = "auto"`（或从配置读取）
+    - [ ] 返回 `ChatRequest`
+  - [ ] 实现工具选择策略（`auto`、`none`、特定工具名）
+
+- [ ] **工具调用结果处理**
+  - [ ] 实现 `processToolCallResults(const std::vector<FunctionCallResult>& results)` 方法
+    - [ ] 将 `FunctionCallResult` 转换为MCP响应格式（可选）
+    - [ ] 处理工具调用结果
+    - [ ] 返回处理后的结果（用于后续LLM请求）
+
+- [ ] **MCP工具与LLM工具的统一接口**
+  - [ ] 实现统一的工具接口（抽象 `ToolProvider` 接口，可选）
+  - [ ] `ToolManager` 和 `MCPService` 都实现该接口
+  - [ ] 简化LLM集成的代码
+
+**验收标准**：
+- 单测验证：MCP工具转换为Function Calling格式正确。
+- 单测验证：API请求构建正确（包含工具列表）。
+- 单测验证：工具调用结果处理正确。
+
+---
+
+## 5.5 项目上下文收集器（ProjectContextCollector）
+
+### 5.5.1 任务概述
+分析项目结构，收集项目信息（目录结构、CMake配置、依赖关系等），为LLM提供项目上下文。这个模块为 `ContextManager` 提供项目上下文数据，帮助LLM理解项目结构和代码关系。
+
+### 5.5.2 文件结构（建议）
+```
+include/naw/desktop_pet/service/
+└── ProjectContextCollector.h
+
+src/naw/desktop_pet/service/
+└── ProjectContextCollector.cpp
+```
+
+### 5.5.3 详细任务清单
+
+#### 5.5.3.1 项目结构分析
+- [ ] **目录扫描**
+  - [ ] 实现目录扫描逻辑（使用 `std::filesystem`）
+  - [ ] 支持递归遍历（遍历所有子目录）
+  - [ ] 识别项目根目录（查找 `.git`、`CMakeLists.txt`、`.project` 等标识）
+  - [ ] 实现项目根目录自动检测（`detectProjectRoot(const std::string& startPath)`）
+
+- [ ] **文件类型识别**
+  - [ ] 实现文件类型识别（通过扩展名）
+    - [ ] C++源文件（`.cpp`、`.cc`、`.cxx`）
+    - [ ] C++头文件（`.h`、`.hpp`、`.hxx`）
+    - [ ] Python文件（`.py`）
+    - [ ] CMake文件（`CMakeLists.txt`、`.cmake`）
+    - [ ] 配置文件（`.json`、`.yaml`、`.toml` 等）
+  - [ ] 分类存储文件列表（按类型分组）
+
+- [ ] **CMakeLists.txt解析**
+  - [ ] 实现CMake文件解析逻辑
+    - [ ] 解析项目名称（`project(NAME)`）
+    - [ ] 解析源文件列表（`add_executable()`、`add_library()`）
+    - [ ] 解析依赖库（`target_link_libraries()`）
+    - [ ] 解析编译选项（`target_compile_options()`、`target_compile_definitions()`）
+    - [ ] 解析包含目录（`target_include_directories()`）
+  - [ ] 处理CMake语法（使用简单解析或正则表达式，不完全解析）
+  - [ ] 处理嵌套CMakeLists.txt（递归解析子目录）
+  - [ ] 返回CMake配置JSON结构
+
+- [ ] **项目信息结构**
+  - [ ] 定义 `ProjectInfo` 结构体
+    - [ ] `name`（项目名称）
+    - [ ] `rootPath`（项目根路径）
+    - [ ] `sourceFiles`（源文件列表）
+    - [ ] `headerFiles`（头文件列表）
+    - [ ] `cmakeConfig`（CMake配置，JSON格式）
+    - [ ] `dependencies`（依赖列表）
+    - [ ] `directoryStructure`（目录结构树，可选）
+    - [ ] `fileContents`（文件内容缓存，可选）
+
+**验收标准**：
+- 单测验证：目录扫描正确（递归遍历、文件分类）。
+- 单测验证：项目根目录检测正确。
+- 单测验证：CMake解析正确（项目名、源文件、依赖）。
+
+#### 5.5.3.2 依赖关系提取
+- [ ] **从CMake提取依赖**
+  - [ ] 实现 `extractDependenciesFromCMake(const nlohmann::json& cmakeConfig)` 方法
+    - [ ] 从CMake配置中提取 `target_link_libraries()` 中的库名
+    - [ ] 从CMake配置中提取 `find_package()` 中的包名
+    - [ ] 返回依赖列表（`std::vector<std::string>`）
+  - [ ] 处理依赖名称规范化（去除版本号、路径等）
+
+- [ ] **从源码提取依赖（可选）**
+  - [ ] 实现 `extractIncludesFromSource(const std::string& filePath)` 方法
+    - [ ] 解析 `#include` 语句（C++）
+    - [ ] 解析 `import` 语句（Python）
+    - [ ] 提取包含的文件路径
+    - [ ] 区分系统头文件和项目内文件
+  - [ ] 实现依赖图构建（文件之间的依赖关系图，可选）
+
+- [ ] **依赖关系分析**
+  - [ ] 实现依赖关系可视化（JSON格式的依赖树，可选）
+  - [ ] 实现循环依赖检测（可选）
+  - [ ] 实现依赖层次分析（核心依赖、可选依赖等，可选）
+
+**验收标准**：
+- 单测验证：从CMake提取依赖正确。
+- 单测验证：从源码提取include正确（C++）。
+- 单测验证：依赖关系分析正确（如果实现）。
+
+#### 5.5.3.3 文件上下文收集
+- [ ] **相关文件查找**
+  - [ ] 实现 `findRelatedFiles(const std::string& filePath, const ProjectInfo& projectInfo)` 方法
+    - [ ] 分析文件的 `#include` 语句（C++）
+    - [ ] 查找被包含的文件（在项目内）
+    - [ ] 查找包含该文件的文件（反向依赖）
+    - [ ] 返回相关文件列表
+  - [ ] 实现文件相关性评分（按依赖关系深度、直接/间接依赖等，可选）
+
+- [ ] **上下文范围确定**
+  - [ ] 实现 `getFileContext(const std::string& filePath, const ProjectInfo& projectInfo, int maxDepth = 1)` 方法
+    - [ ] 确定上下文范围（直接依赖、间接依赖等）
+    - [ ] 限制上下文大小（最大文件数、最大Token数等）
+    - [ ] 按相关性排序（相关文件在前）
+  - [ ] 实现上下文裁剪（超过限制时选择最重要的文件）
+
+- [ ] **文件内容收集**
+  - [ ] 实现文件内容读取（使用 `read_file` 工具或直接读取）
+  - [ ] 实现文件内容缓存（避免重复读取）
+  - [ ] 支持行范围读取（只读取相关部分，节省Token）
+  - [ ] 返回文件上下文字符串（格式化后的文件内容）
+
+**验收标准**：
+- 单测验证：相关文件查找正确（include关系）。
+- 单测验证：上下文范围确定正确（深度限制、大小限制）。
+- 单测验证：文件内容收集正确（缓存、格式化）。
+
+#### 5.5.3.4 项目摘要生成
+- [ ] **项目摘要内容**
+  - [ ] 实现 `getProjectSummary(const ProjectInfo& projectInfo)` 方法
+    - [ ] 生成项目基本信息（名称、路径、语言类型等）
+    - [ ] 生成项目结构摘要（目录结构、文件数量等）
+    - [ ] 生成依赖摘要（主要依赖库列表）
+    - [ ] 生成构建配置摘要（CMake配置要点）
+  - [ ] 返回格式化字符串（Markdown或纯文本格式）
+
+- [ ] **摘要格式**
+  - [ ] 定义摘要模板（结构化格式）
+    - [ ] 项目名称和描述
+    - [ ] 目录结构（树形结构，简化版）
+    - [ ] 主要文件列表
+    - [ ] 依赖关系
+    - [ ] 构建配置
+  - [ ] 实现摘要长度控制（限制Token数，适合LLM处理）
+
+- [ ] **摘要缓存**
+  - [ ] 实现摘要缓存机制（项目结构变化时才重新生成）
+  - [ ] 使用文件修改时间判断是否需要更新
+  - [ ] 缓存摘要结果（内存缓存或文件缓存）
+
+**验收标准**：
+- 单测验证：项目摘要生成正确（包含所有关键信息）。
+- 单测验证：摘要格式正确（结构化、可读）。
+- 单测验证：摘要缓存机制正确（缓存命中、失效更新）。
+
+---
+
+## 5.6 单元测试与示例
+
+### 5.6.1 单元测试
+- [ ] **ToolManager测试**
+  - [ ] 工具注册测试（注册、查询、移除）
+  - [ ] 工具执行测试（成功、失败、参数验证）
+  - [ ] 工具权限控制测试（如果实现）
+  - [ ] 线程安全测试（并发注册/执行）
+
+- [ ] **CodeTools测试**
+  - [ ] read_file工具测试（完整文件、行范围、错误处理）
+  - [ ] list_files工具测试（目录遍历、过滤、递归）
+  - [ ] search_code工具测试（文本搜索、正则、文件过滤）
+  - [ ] get_project_structure工具测试（结构分析、CMake解析）
+  - [ ] analyze_code工具测试（函数提取、类提取、依赖分析）
+
+- [ ] **FunctionCallingHandler测试**
+  - [ ] 工具调用检测测试（识别、参数提取）
+  - [ ] 工具调用执行测试（批量执行、结果收集）
+  - [ ] 后续请求构建测试（消息构建、参数继承）
+  - [ ] 多轮对话测试（多轮工具调用流程）
+
+- [ ] **MCPService测试**
+  - [ ] MCP协议测试（消息序列化/反序列化）
+  - [ ] MCP Server测试（工具列表、工具调用）
+  - [ ] MCP工具转换测试（ToolManager -> MCP格式）
+  - [ ] MCP与LLM集成测试（Function Calling格式转换）
+
+- [ ] **ProjectContextCollector测试**
+  - [ ] 项目结构分析测试（目录扫描、CMake解析）
+  - [ ] 依赖关系提取测试（CMake依赖、源码依赖）
+  - [ ] 文件上下文收集测试（相关文件查找、上下文范围）
+  - [ ] 项目摘要生成测试（摘要内容、格式、缓存）
+
+### 5.6.2 集成测试
+- [ ] **ToolManager + CodeTools 集成测试**
+  - [ ] 代码工具注册和执行流程
+  - [ ] 工具错误处理集成
+
+- [ ] **FunctionCallingHandler + ToolManager 集成测试**
+  - [ ] 完整的Function Calling流程（检测 -> 执行 -> 构建后续请求）
+  - [ ] 多轮工具调用流程
+  - [ ] 工具调用错误处理
+
+- [ ] **MCPService + ToolManager 集成测试**
+  - [ ] MCP工具注册和查询
+  - [ ] MCP工具调用执行
+  - [ ] MCP与Function Calling格式转换
+
+- [ ] **ProjectContextCollector + ContextManager 集成测试**
+  - [ ] 项目上下文收集和集成到对话上下文
+  - [ ] 上下文构建流程
+
+- [ ] **完整工具调用流程集成测试**
+  - [ ] APIClient -> FunctionCallingHandler -> ToolManager -> CodeTools
+  - [ ] 端到端工具调用流程（LLM请求 -> 工具执行 -> LLM响应）
+  - [ ] 多轮对话中的工具调用
+
+---
+
+## 开发顺序建议
+
+### 第一阶段：工具管理器（5.1）
+1. 先完成 `ToolManager`，这是所有工具的基础。
+2. 实现工具注册、查询和执行功能。
+
+### 第二阶段：代码工具集（5.2）
+1. 完成 `CodeTools`，实现标准代码工具。
+2. 逐个实现各个工具（read_file、list_files等）。
+3. 集成到 `ToolManager`。
+
+### 第三阶段：Function Calling处理器（5.3）
+1. 完成 `FunctionCallingHandler`。
+2. 集成 `ToolManager` 实现工具调用流程。
+3. 实现后续请求构建。
+
+### 第四阶段：MCP服务（5.4）
+1. 完成 `MCPService`，实现MCP协议。
+2. 集成 `ToolManager` 转换为MCP工具。
+3. 实现MCP与LLM集成。
+
+### 第五阶段：项目上下文收集器（5.5）
+1. 完成 `ProjectContextCollector`。
+2. 实现项目结构分析和依赖提取。
+3. 集成到 `ContextManager`（可选，如果需要）。
+
+### 第六阶段：集成和测试
+1. 完成所有模块的集成测试。
+2. 性能测试和优化。
+
+---
+
+## 进度追踪
+
+### 5.1 工具管理器（ToolManager）
+- [ ] 工具定义结构
+- [ ] 工具注册机制
+- [ ] 工具查询
+- [ ] 工具执行
+- [ ] 单元测试
+
+**进度**: 0/5 主要模块完成
+
+### 5.2 代码工具集（CodeTools）
+- [ ] read_file工具实现
+- [ ] list_files工具实现
+- [ ] search_code工具实现
+- [ ] get_project_structure工具实现
+- [ ] analyze_code工具实现
+- [ ] 统一工具注册接口
+- [ ] 单元测试
+
+**进度**: 0/7 主要模块完成
+
+### 5.3 Function Calling处理器（FunctionCallingHandler）
+- [ ] 工具调用检测
+- [ ] 工具调用执行流程
+- [ ] 后续请求构建
+- [ ] 单元测试
+
+**进度**: 0/4 主要模块完成
+
+### 5.4 MCP服务（MCPService）
+- [ ] MCP协议基础
+- [ ] MCP Server实现
+- [ ] MCP工具注册
+- [ ] MCP与LLM集成
+- [ ] 单元测试
+
+**进度**: 0/5 主要模块完成
+
+### 5.5 项目上下文收集器（ProjectContextCollector）
+- [ ] 项目结构分析
+- [ ] 依赖关系提取
+- [ ] 文件上下文收集
+- [ ] 项目摘要生成
+- [ ] 单元测试
+
+**进度**: 0/5 主要模块完成
+
+### 5.6 单元测试与示例
+- [ ] ToolManager测试
+- [ ] CodeTools测试
+- [ ] FunctionCallingHandler测试
+- [ ] MCPService测试
+- [ ] ProjectContextCollector测试
+- [ ] 集成测试
+
+**进度**: 0/6 主要模块完成
+
+---
+
+## 总体进度
+
+**Phase 5 总体进度**: 0/27 主要模块完成
+
+**各模块完成情况**：
+- 5.1 工具管理器（ToolManager）: 0/5
+- 5.2 代码工具集（CodeTools）: 0/7
+- 5.3 Function Calling处理器（FunctionCallingHandler）: 0/4
+- 5.4 MCP服务（MCPService）: 0/5
+- 5.5 项目上下文收集器（ProjectContextCollector）: 0/5
+- 5.6 单元测试与示例: 0/6
