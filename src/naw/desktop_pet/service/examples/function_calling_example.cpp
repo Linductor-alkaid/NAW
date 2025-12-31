@@ -342,12 +342,65 @@ int main() {
                                 if (result.result.has_value()) {
                                     // 打印结果摘要（如果结果太长，只显示前200字符）
                                     try {
-                                        // 先尝试直接序列化
-                                        std::string resultStr = result.result.value().dump();
-                                        if (resultStr.length() > 200) {
-                                            std::cout << "  结果: " << resultStr.substr(0, 200) << "...\n";
+                                        // 先检查JSON大小，避免对大结果进行完整序列化
+                                        const auto& json = result.result.value();
+                                        size_t estimatedSize = 0;
+                                        
+                                        // 估算JSON大小（避免完整序列化）
+                                        if (json.is_object()) {
+                                            for (const auto& [key, value] : json.items()) {
+                                                estimatedSize += key.size() + 10; // 键名 + 估算值大小
+                                                if (value.is_string()) {
+                                                    estimatedSize += value.get<std::string>().size();
+                                                } else if (value.is_array()) {
+                                                    estimatedSize += value.size() * 50; // 数组元素估算
+                                                }
+                                            }
+                                        } else if (json.is_array()) {
+                                            estimatedSize = json.size() * 50; // 数组元素估算
+                                        } else if (json.is_string()) {
+                                            estimatedSize = json.get<std::string>().size();
                                         } else {
-                                            std::cout << "  结果: " << resultStr << "\n";
+                                            estimatedSize = 100; // 其他类型估算
+                                        }
+                                        
+                                        // 如果估算大小超过1MB，只显示摘要，不进行完整序列化
+                                        if (estimatedSize > 1024 * 1024) {
+                                            std::cout << "  结果: [结果过大，已省略显示（" 
+                                                      << (estimatedSize / 1024) << " KB）]\n";
+                                            if (json.is_object()) {
+                                                std::cout << "  结果类型: JSON对象，包含 " << json.size() << " 个键\n";
+                                                // 显示前几个键
+                                                size_t keyCount = 0;
+                                                for (const auto& [key, value] : json.items()) {
+                                                    if (keyCount++ >= 5) break;
+                                                    std::cout << "    - " << key;
+                                                    if (value.is_array()) {
+                                                        std::cout << " (数组，包含 " << value.size() << " 个元素)";
+                                                    } else if (value.is_string()) {
+                                                        std::string str = value.get<std::string>();
+                                                        if (str.size() > 50) {
+                                                            std::cout << " (字符串，长度 " << str.size() << ")";
+                                                        } else {
+                                                            std::cout << ": " << str;
+                                                        }
+                                                    }
+                                                    std::cout << "\n";
+                                                }
+                                                if (json.size() > 5) {
+                                                    std::cout << "    ... (还有 " << (json.size() - 5) << " 个键)\n";
+                                                }
+                                            } else if (json.is_array()) {
+                                                std::cout << "  结果类型: JSON数组，包含 " << json.size() << " 个元素\n";
+                                            }
+                                        } else {
+                                            // 结果不大，可以安全序列化
+                                            std::string resultStr = json.dump();
+                                            if (resultStr.length() > 200) {
+                                                std::cout << "  结果: " << resultStr.substr(0, 200) << "...\n";
+                                            } else {
+                                                std::cout << "  结果: " << resultStr << "\n";
+                                            }
                                         }
                                     } catch (const nlohmann::json::exception& e) {
                                         // JSON序列化失败，可能是UTF-8编码问题（Windows上文件路径可能是GBK编码）

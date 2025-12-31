@@ -17,6 +17,13 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ResponseHandler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CodeTools.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/CodeToolsUtils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/ReadFileTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/WriteFileTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/ListFilesTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/SearchCodeTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/GetProjectStructureTool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/AnalyzeCodeTool.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/FunctionCallingHandler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolCallContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectContextCollector.cpp
@@ -36,6 +43,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ResponseHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CodeTools.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/tools/CodeToolsUtils.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/FunctionCallingHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolCallContext.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ProjectContextCollector.h

@@ -318,17 +318,17 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
     j["context_refinement"] = {
         {"_comment", "Context refinement using embeddings and rerank models"},
         {"enabled", true},
-        {"threshold_chars", 2000},
+        {"threshold_chars", 5000},
         {"threshold_tokens", 500},
         {"chunk_size", 500},
         {"chunk_overlap", 50},
         {"embedding", {
-            {"model_id", "BAAI/bge-large-zh-v1.5"},
+            {"model_id", "BAAI/bge-m3"},
             {"api_key", "${SILICONFLOW_API_KEY}"},
             {"base_url", "https://api.siliconflow.cn/v1"}
         }},
         {"rerank", {
-            {"model_id", "BAAI/bge-reranker-large"},
+            {"model_id", "BAAI/bge-reranker-v2-m3"},
             {"api_key", "${SILICONFLOW_API_KEY}"},
             {"base_url", "https://api.siliconflow.cn/v1"},
             {"top_k", 10},
