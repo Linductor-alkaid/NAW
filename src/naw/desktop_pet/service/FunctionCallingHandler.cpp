@@ -1,5 +1,6 @@
 #include "naw/desktop_pet/service/FunctionCallingHandler.h"
 
+#include "naw/desktop_pet/service/ContextRefiner.h"
 #include "naw/desktop_pet/service/ErrorHandler.h"
 #include "naw/desktop_pet/service/ToolCallContext.h"
 
@@ -483,7 +484,9 @@ std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCallsConcurre
 // ========== 后续请求构建 ==========
 
 std::vector<types::ChatMessage> FunctionCallingHandler::buildToolResultMessages(
-    const std::vector<FunctionCallResult>& results
+    const std::vector<FunctionCallResult>& results,
+    ContextRefiner* contextRefiner,
+    const std::optional<std::string>& userQuery
 ) {
     std::vector<types::ChatMessage> messages;
     messages.reserve(results.size());
@@ -496,29 +499,43 @@ std::vector<types::ChatMessage> FunctionCallingHandler::buildToolResultMessages(
 
         if (result.success && result.result.has_value()) {
             // On success, convert result to JSON string
+            std::string resultText;
             try {
                 // 尝试正常dump
-                message.setText(result.result.value().dump());
+                resultText = result.result.value().dump();
             } catch (const nlohmann::json::exception& e) {
                 // 如果dump失败（可能是UTF-8编码问题），尝试清理JSON中的字符串
                 try {
                     // 创建一个清理后的JSON副本
                     nlohmann::json cleaned = FunctionCallingHandler::cleanJsonForUtf8(result.result.value());
-                    message.setText(cleaned.dump());
+                    resultText = cleaned.dump();
                 } catch (const std::exception& e2) {
                     // 如果还是失败，返回一个简化的错误信息
-                    message.setText("Error: Failed to serialize tool result (invalid UTF-8 encoding). Tool: " + result.toolName);
+                    resultText = "Error: Failed to serialize tool result (invalid UTF-8 encoding). Tool: " + result.toolName;
                 } catch (...) {
                     // 捕获所有其他异常
-                    message.setText("Error: Failed to serialize tool result. Tool: " + result.toolName);
+                    resultText = "Error: Failed to serialize tool result. Tool: " + result.toolName;
                 }
             } catch (const std::exception& e) {
                 // 捕获其他标准异常
-                message.setText("Error: Failed to serialize tool result: " + std::string(e.what()));
+                resultText = "Error: Failed to serialize tool result: " + std::string(e.what());
             } catch (...) {
                 // 捕获所有其他异常
-                message.setText("Error: Failed to serialize tool result");
+                resultText = "Error: Failed to serialize tool result";
             }
+
+            // 如果启用了上下文提纯且结果文本过长，应用提纯
+            if (contextRefiner && contextRefiner->isEnabled() && !resultText.empty()) {
+                ErrorInfo refineError;
+                std::string refined = contextRefiner->refineContext(resultText, userQuery, &refineError);
+                if (refineError.message.empty()) {
+                    // 提纯成功
+                    resultText = refined;
+                }
+                // 如果提纯失败，使用原始文本（错误已记录）
+            }
+
+            message.setText(resultText);
         } else {
             // On failure, return error message
             std::string errorMsg = "Error: ";
@@ -576,7 +593,9 @@ std::optional<types::ChatRequest> FunctionCallingHandler::processToolCalls(
     const types::ChatRequest& originalRequest,
     ToolManager& toolManager,
     ErrorInfo* error,
-    ToolCallContext* context
+    ToolCallContext* context,
+    ContextRefiner* contextRefiner,
+    const std::optional<std::string>& userQuery
 ) {
     // 检查是否有工具调用
     if (!hasToolCalls(response)) {
@@ -608,8 +627,22 @@ std::optional<types::ChatRequest> FunctionCallingHandler::processToolCalls(
 
     // 即使有部分失败，也继续构建后续请求（让LLM知道哪些工具失败了）
 
-    // 构建工具结果消息
-    auto toolResultMessages = buildToolResultMessages(results);
+    // 如果没有提供用户查询，尝试从原始消息中提取最后一个用户消息
+    std::optional<std::string> finalUserQuery = userQuery;
+    if (!finalUserQuery.has_value() && !originalRequest.messages.empty()) {
+        // 从后往前查找最后一个用户消息
+        for (auto it = originalRequest.messages.rbegin(); it != originalRequest.messages.rend(); ++it) {
+            if (it->role == types::MessageRole::User) {
+                if (auto tv = it->textView(); tv.has_value()) {
+                    finalUserQuery = std::string(*tv);
+                }
+                break;
+            }
+        }
+    }
+
+    // 构建工具结果消息（传递 ContextRefiner 以自动优化过长的工具输出）
+    auto toolResultMessages = buildToolResultMessages(results, contextRefiner, finalUserQuery);
 
     // 构建后续请求
     auto followUpRequest = buildFollowUpRequest(

@@ -15,8 +15,9 @@
 
 namespace naw::desktop_pet::service {
 
-// 前向声明
+    // 前向声明
 class ToolCallContext;
+class ContextRefiner;
 
 /**
  * @brief 工具调用执行结果
@@ -132,10 +133,14 @@ public:
     /**
      * @brief 构建工具结果消息
      * @param results 工具执行结果列表
+     * @param contextRefiner 上下文提纯器（可选，用于提纯过长的工具输出）
+     * @param userQuery 用户查询文本（可选，用于重排序）
      * @return 工具结果消息列表
      */
     static std::vector<types::ChatMessage> buildToolResultMessages(
-        const std::vector<FunctionCallResult>& results
+        const std::vector<FunctionCallResult>& results,
+        ContextRefiner* contextRefiner = nullptr,
+        const std::optional<std::string>& userQuery = std::nullopt
     );
 
     /**
@@ -163,6 +168,8 @@ public:
      * @param toolManager 工具管理器
      * @param error 如果处理失败，输出错误信息
      * @param context 工具调用上下文管理器（可选，用于记录历史和缓存）
+     * @param contextRefiner 上下文提纯器（可选，用于提纯过长的工具输出）
+     * @param userQuery 用户查询文本（可选，用于重排序，如果不提供则从 originalRequest.messages 中提取）
      * @return 如果响应中包含工具调用且处理成功，返回后续请求；否则返回 std::nullopt
      */
     static std::optional<types::ChatRequest> processToolCalls(
@@ -170,7 +177,9 @@ public:
         const types::ChatRequest& originalRequest,
         ToolManager& toolManager,
         ErrorInfo* error = nullptr,
-        ToolCallContext* context = nullptr
+        ToolCallContext* context = nullptr,
+        ContextRefiner* contextRefiner = nullptr,
+        const std::optional<std::string>& userQuery = std::nullopt
     );
 };
 

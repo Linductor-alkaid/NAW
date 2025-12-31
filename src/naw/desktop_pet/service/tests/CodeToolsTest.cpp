@@ -6,6 +6,7 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <map>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -106,6 +107,12 @@ namespace {
     
     // 创建测试文件
     void createTestFile(const fs::path& path, const std::string& content) {
+        // 确保父目录存在
+        auto parentPath = path.parent_path();
+        if (!parentPath.empty() && !fs::exists(parentPath)) {
+            fs::create_directories(parentPath);
+        }
+        
         std::ofstream file(path);
         CHECK_TRUE(file.is_open());
         file << content;
@@ -431,6 +438,207 @@ int main() {
                 std::string projectName = cmakeConfig["project_name"].get<std::string>();
                 CHECK_TRUE(!projectName.empty());
             }
+        }
+    }});
+    
+    tests.push_back({"GetProjectStructure_Filtering", [&]() {
+        ToolManager toolManager;
+        CodeTools::registerAllTools(toolManager);
+        
+        // 创建包含构建目录和编译产物的项目结构
+        createTestFile(testDir / "CMakeLists.txt", "project(TestProject)");
+        createTestFile(testDir / "src" / "main.cpp", "int main() {}");
+        createTestFile(testDir / "include" / "test.h", "#pragma once");
+        createTestFile(testDir / "build" / "main.o", "object file");
+        createTestFile(testDir / "build" / "main.exe", "executable");
+        createTestFile(testDir / ".git" / "config", "git config");
+        
+        nlohmann::json args;
+        args["project_root"] = testDir.string();
+        
+        auto result = toolManager.executeTool("get_project_structure", args);
+        CHECK_TRUE(result.has_value());
+        
+        // 检查构建目录和编译产物被过滤
+        if (result->contains("source_files")) {
+            auto sourceFiles = (*result)["source_files"];
+            bool foundBuildFile = false;
+            for (const auto& file : sourceFiles) {
+                std::string fileStr = file.get<std::string>();
+                if (fileStr.find("build") != std::string::npos ||
+                    fileStr.find(".o") != std::string::npos ||
+                    fileStr.find(".exe") != std::string::npos) {
+                    foundBuildFile = true;
+                    break;
+                }
+            }
+            CHECK_TRUE(!foundBuildFile); // 不应该包含构建文件
+        }
+        
+        // 检查过滤统计信息
+        CHECK_TRUE(result->contains("files_filtered"));
+    }});
+    
+    tests.push_back({"GetProjectStructure_RelativePaths", [&]() {
+        ToolManager toolManager;
+        CodeTools::registerAllTools(toolManager);
+        
+        createTestFile(testDir / "CMakeLists.txt", "project(TestProject)");
+        createTestFile(testDir / "src" / "main.cpp", "int main() {}");
+        
+        nlohmann::json args;
+        args["project_root"] = testDir.string();
+        args["use_relative_paths"] = true;
+        
+        auto result = toolManager.executeTool("get_project_structure", args);
+        CHECK_TRUE(result.has_value());
+        
+        // 检查路径是相对路径
+        CHECK_TRUE(result->contains("source_files"));
+        auto sourceFiles = (*result)["source_files"];
+        CHECK_TRUE(!sourceFiles.empty()); // 确保有源文件
+        
+        // 查找 src/main.cpp 文件（可能在列表的任何位置）
+        bool foundSrcMain = false;
+        std::string srcMainPath;
+        for (const auto& file : sourceFiles) {
+            std::string filePath = file.get<std::string>();
+            // 检查是否包含 "src" 和 "main.cpp"
+            if (filePath.find("src") != std::string::npos && 
+                filePath.find("main.cpp") != std::string::npos) {
+                foundSrcMain = true;
+                srcMainPath = filePath;
+                break;
+            }
+        }
+        
+        CHECK_TRUE(foundSrcMain); // 确保找到了 src/main.cpp
+        
+        // 验证路径是相对路径格式
+        // 相对路径应该包含 "src/main.cpp" 或 "src\\main.cpp" 或 "src/main.cpp"
+        CHECK_TRUE(srcMainPath.find("src") != std::string::npos);
+        CHECK_TRUE(srcMainPath.find("main.cpp") != std::string::npos);
+        
+        // 相对路径不应该以绝对路径开始（Windows: 包含 ":\\" 或 Unix: 以 "/" 开始但不是项目根）
+        bool isAbsolute = (srcMainPath.size() > 2 && srcMainPath[1] == ':' && srcMainPath[2] == '\\') ||
+                         (srcMainPath[0] == '/' && srcMainPath.find(testDir.string()) == 0);
+        CHECK_TRUE(!isAbsolute);
+    }});
+    
+    tests.push_back({"GetProjectStructure_SizeLimit", [&]() {
+        ToolManager toolManager;
+        CodeTools::registerAllTools(toolManager);
+        
+        createTestFile(testDir / "CMakeLists.txt", "project(TestProject)");
+        
+        // 创建多个文件
+        for (int i = 0; i < 10; ++i) {
+            createTestFile(testDir / ("file" + std::to_string(i) + ".cpp"), 
+                          "int func" + std::to_string(i) + "() { return " + std::to_string(i) + "; }");
+        }
+        
+        nlohmann::json args;
+        args["project_root"] = testDir.string();
+        args["max_files"] = 5; // 限制为5个文件
+        
+        auto result = toolManager.executeTool("get_project_structure", args);
+        CHECK_TRUE(result.has_value());
+        
+        if (result->contains("source_files")) {
+            auto sourceFiles = (*result)["source_files"];
+            // 文件数量应该不超过限制
+            CHECK_TRUE(sourceFiles.size() <= 5);
+        }
+        
+        // 检查跳过统计
+        CHECK_TRUE(result->contains("files_skipped"));
+    }});
+    
+    tests.push_back({"GetProjectStructure_Deduplication", [&]() {
+        ToolManager toolManager;
+        CodeTools::registerAllTools(toolManager);
+        
+        createTestFile(testDir / "CMakeLists.txt", "project(TestProject)");
+        createTestFile(testDir / "src" / "main.cpp", "int main() {}");
+        
+        nlohmann::json args;
+        args["project_root"] = testDir.string();
+        
+        auto result = toolManager.executeTool("get_project_structure", args);
+        CHECK_TRUE(result.has_value());
+        
+        // 检查文件列表和结构中没有重复
+        if (result->contains("source_files") && result->contains("structure")) {
+            auto sourceFiles = (*result)["source_files"];
+            std::string structure = (*result)["structure"].get<std::string>();
+            
+            // 统计每个文件在列表中的出现次数
+            std::map<std::string, int> fileCount;
+            for (const auto& file : sourceFiles) {
+                std::string fileStr = file.get<std::string>();
+                fileCount[fileStr]++;
+            }
+            
+            // 每个文件应该只出现一次
+            for (const auto& pair : fileCount) {
+                CHECK_TRUE(pair.second == 1);
+            }
+        }
+    }});
+    
+    tests.push_back({"GetProjectStructure_CustomFilters", [&]() {
+        ToolManager toolManager;
+        CodeTools::registerAllTools(toolManager);
+        
+        createTestFile(testDir / "CMakeLists.txt", "project(TestProject)");
+        createTestFile(testDir / "src" / "main.cpp", "int main() {}");
+        createTestFile(testDir / "test" / "test.cpp", "int test() {}");
+        createTestFile(testDir / "docs" / "readme.md", "documentation");
+        
+        nlohmann::json args;
+        args["project_root"] = testDir.string();
+        args["exclude_patterns"] = nlohmann::json::array({"test/*", "docs/*"});
+        
+        auto result = toolManager.executeTool("get_project_structure", args);
+        CHECK_TRUE(result.has_value());
+        
+        // 检查排除模式生效
+        if (result->contains("source_files")) {
+            auto sourceFiles = (*result)["source_files"];
+            bool foundExcluded = false;
+            for (const auto& file : sourceFiles) {
+                std::string fileStr = file.get<std::string>();
+                if (fileStr.find("test/test.cpp") != std::string::npos ||
+                    fileStr.find("docs") != std::string::npos) {
+                    foundExcluded = true;
+                    break;
+                }
+            }
+            CHECK_TRUE(!foundExcluded); // 排除的文件不应该出现
+        }
+    }});
+    
+    tests.push_back({"GetProjectStructure_DetailLevel", [&]() {
+        ToolManager toolManager;
+        CodeTools::registerAllTools(toolManager);
+        
+        createTestFile(testDir / "CMakeLists.txt", "project(TestProject)");
+        createTestFile(testDir / "src" / "main.cpp", "int main() {}");
+        createTestFile(testDir / "include" / "test.h", "#pragma once");
+        
+        nlohmann::json args;
+        args["project_root"] = testDir.string();
+        args["detail_level"] = "minimal";
+        
+        auto result = toolManager.executeTool("get_project_structure", args);
+        CHECK_TRUE(result.has_value());
+        
+        // minimal 模式应该只包含目录结构，不包含文件列表
+        if (result->contains("structure")) {
+            std::string structure = (*result)["structure"].get<std::string>();
+            // 结构应该包含目录信息
+            CHECK_TRUE(structure.find("src") != std::string::npos || 
+                      structure.find("include") != std::string::npos);
         }
     }});
     

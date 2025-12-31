@@ -315,6 +315,26 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
     j["pet"] = {
         {"name", "NAW"}
     };
+    j["context_refinement"] = {
+        {"_comment", "Context refinement using embeddings and rerank models"},
+        {"enabled", true},
+        {"threshold_chars", 2000},
+        {"threshold_tokens", 500},
+        {"chunk_size", 500},
+        {"chunk_overlap", 50},
+        {"embedding", {
+            {"model_id", "BAAI/bge-large-zh-v1.5"},
+            {"api_key", "${SILICONFLOW_API_KEY}"},
+            {"base_url", "https://api.siliconflow.cn/v1"}
+        }},
+        {"rerank", {
+            {"model_id", "BAAI/bge-reranker-large"},
+            {"api_key", "${SILICONFLOW_API_KEY}"},
+            {"base_url", "https://api.siliconflow.cn/v1"},
+            {"top_k", 10},
+            {"adaptive_threshold", 0.5}
+        }}
+    };
     return j;
 }
 

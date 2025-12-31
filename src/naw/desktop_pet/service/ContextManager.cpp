@@ -1,5 +1,6 @@
 #include "naw/desktop_pet/service/ContextManager.h"
 
+#include "naw/desktop_pet/service/ContextRefiner.h"
 #include "naw/desktop_pet/service/ErrorHandler.h"
 #include "naw/desktop_pet/service/ProjectContextCollector.h"
 #include "naw/desktop_pet/service/ToolManager.h"
@@ -104,11 +105,18 @@ void ConversationHistory::trimHistoryByTokens(
 
 // ========== ContextManager 实现 ==========
 
-ContextManager::ContextManager(ConfigManager& configManager)
+ContextManager::ContextManager(ConfigManager& configManager, APIClient* apiClient)
     : m_configManager(configManager) {
     // 加载默认配置
     loadConfigFromFile();
+    
+    // 如果提供了 APIClient，创建 ContextRefiner
+    if (apiClient != nullptr) {
+        m_contextRefiner = std::make_unique<ContextRefiner>(m_configManager, *apiClient);
+    }
 }
+
+ContextManager::~ContextManager() = default;
 
 void ContextManager::addMessage(const types::ChatMessage& message, const std::string& sessionId) {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -220,7 +228,20 @@ types::ChatMessage ContextManager::buildCodeContext(const CodeContext& codeConte
         oss << "\nFocus Area: " << *codeContext.focusArea << "\n";
     }
 
-    msg.setText(oss.str());
+    std::string contextText = oss.str();
+    
+    // 如果启用了上下文提纯，应用提纯
+    if (m_contextRefiner && m_contextRefiner->isEnabled()) {
+        ErrorInfo refineError;
+        std::string refined = m_contextRefiner->refineContext(contextText, std::nullopt, &refineError);
+        if (refineError.message.empty()) {
+            // 提纯成功
+            contextText = refined;
+        }
+        // 如果提纯失败，使用原始文本（错误已记录）
+    }
+
+    msg.setText(contextText);
     return msg;
 }
 
@@ -238,7 +259,20 @@ types::ChatMessage ContextManager::buildMemoryContext(
         oss << " (importance: " << event.importanceScore << ")\n";
     }
 
-    msg.setText(oss.str());
+    std::string contextText = oss.str();
+    
+    // 如果启用了上下文提纯，应用提纯
+    if (m_contextRefiner && m_contextRefiner->isEnabled()) {
+        ErrorInfo refineError;
+        std::string refined = m_contextRefiner->refineContext(contextText, std::nullopt, &refineError);
+        if (refineError.message.empty()) {
+            // 提纯成功
+            contextText = refined;
+        }
+        // 如果提纯失败，使用原始文本（错误已记录）
+    }
+
+    msg.setText(contextText);
     return msg;
 }
 

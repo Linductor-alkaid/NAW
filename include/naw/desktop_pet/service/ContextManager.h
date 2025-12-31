@@ -8,9 +8,16 @@
 #include "naw/desktop_pet/service/types/TaskType.h"
 #include "naw/desktop_pet/service/utils/TokenCounter.h"
 
+// 前向声明
+namespace naw::desktop_pet::service {
+    class APIClient;
+    class ContextRefiner;
+}
+
 #include <chrono>
 #include <cstddef>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -93,8 +100,8 @@ private:
  */
 class ContextManager {
 public:
-    explicit ContextManager(ConfigManager& configManager);
-    ~ContextManager() = default;
+    explicit ContextManager(ConfigManager& configManager, APIClient* apiClient = nullptr);
+    ~ContextManager();
 
     // 禁止拷贝/移动
     ContextManager(const ContextManager&) = delete;
@@ -312,6 +319,9 @@ private:
 
     // 工具管理器（可选，用于Function Calling）
     ToolManager* m_toolManager{nullptr};
+
+    // 上下文提纯器（可选）
+    std::unique_ptr<ContextRefiner> m_contextRefiner;
 
     // 内部方法
     /**

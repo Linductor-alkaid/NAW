@@ -72,6 +72,37 @@ public:
     // SSE 流式：阻塞直到完成或出错
     void chatStream(const types::ChatRequest& req, Callbacks cb);
 
+    // ========== 嵌入和重排序 API ==========
+    /**
+     * @brief 创建文本嵌入向量
+     * @param texts 要嵌入的文本列表
+     * @param modelId 嵌入模型ID（可选，从配置中获取）
+     * @return 嵌入向量列表，每个文本对应一个向量
+     */
+    std::vector<std::vector<float>> createEmbeddings(
+        const std::vector<std::string>& texts,
+        const std::string& modelId = ""
+    );
+
+    /**
+     * @brief 重排序文档列表
+     * @param query 查询文本
+     * @param documents 文档列表
+     * @param modelId 重排序模型ID（可选，从配置中获取）
+     * @param topK 返回前K个结果（可选，从配置中获取）
+     * @return 重排序结果，包含文档索引和相关性分数
+     */
+    struct RerankResult {
+        size_t index;
+        float score;
+    };
+    std::vector<RerankResult> createRerank(
+        const std::string& query,
+        const std::vector<std::string>& documents,
+        const std::string& modelId = "",
+        int topK = -1
+    );
+
     // ========== 便于测试/诊断 ==========
     std::string getBaseUrl() const { return m_baseUrl; }
     std::string getApiKeyRedacted() const;

@@ -584,5 +584,208 @@ void APIClient::chatStream(const types::ChatRequest& req, Callbacks cb) {
     if (!agg.completed()) agg.onDone();
 }
 
+// ========== 嵌入和重排序 API ==========
+
+std::vector<std::vector<float>> APIClient::createEmbeddings(
+    const std::vector<std::string>& texts,
+    const std::string& modelId
+) {
+    // 获取嵌入模型配置
+    std::string embeddingModelId = modelId;
+    std::string baseUrl = m_baseUrl;
+    std::string apiKey = m_apiKey;
+    int timeoutMs = m_timeoutMs;
+
+    if (embeddingModelId.empty()) {
+        if (auto v = m_cfg.get("context_refinement.embedding.model_id"); v.has_value() && v->is_string()) {
+            embeddingModelId = trimCopy(v->get<std::string>());
+        }
+        if (embeddingModelId.empty()) {
+            embeddingModelId = "BAAI/bge-large-zh-v1.5"; // 默认模型
+        }
+    }
+
+    // 获取嵌入API配置
+    if (auto v = m_cfg.get("context_refinement.embedding.base_url"); v.has_value() && v->is_string()) {
+        const auto s = trimCopy(v->get<std::string>());
+        if (!s.empty()) baseUrl = s;
+    }
+    if (auto v = m_cfg.get("context_refinement.embedding.api_key"); v.has_value() && v->is_string()) {
+        const auto s = trimCopy(v->get<std::string>());
+        if (!s.empty()) apiKey = s;
+    }
+
+    HttpClient client(baseUrl);
+    configureHttpClient(client, apiKey, timeoutMs);
+
+    const std::string endpoint = "/embeddings";
+
+    // 构建请求体
+    nlohmann::json requestBody;
+    requestBody["model"] = embeddingModelId;
+    requestBody["input"] = nlohmann::json::array();
+    for (const auto& text : texts) {
+        requestBody["input"].push_back(text);
+    }
+
+    HttpRequest hreq;
+    hreq.method = HttpMethod::POST;
+    hreq.url = joinUrl(baseUrl, endpoint);
+    hreq.body = requestBody.dump();
+    hreq.timeoutMs = timeoutMs;
+    hreq.followRedirects = true;
+    if (!apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + apiKey;
+    hreq.headers["Content-Type"] = "application/json";
+    hreq.headers["Accept"] = "application/json";
+
+    const auto resp = client.execute(hreq);
+    if (!resp.isSuccess()) {
+        auto info = ErrorHandler::fromHttpResponse(resp, std::optional<HttpRequest>{hreq});
+        enrichErrorInfoContext(info, embeddingModelId, endpoint, std::optional<HttpRequest>{hreq});
+        throw ApiClientError(info);
+    }
+
+    auto parsed = resp.asJson();
+    if (!parsed.has_value()) {
+        ErrorInfo info;
+        info.errorType = ErrorType::UnknownError;
+        info.errorCode = resp.statusCode;
+        info.message = "Invalid JSON response from embeddings API";
+        info.details = nlohmann::json{{"body_snippet", resp.body.substr(0, 1024)}};
+        enrichErrorInfoContext(info, embeddingModelId, endpoint, std::optional<HttpRequest>{hreq});
+        throw ApiClientError(info);
+    }
+
+    // 解析响应
+    std::vector<std::vector<float>> embeddings;
+    if (parsed->contains("data") && parsed->at("data").is_array()) {
+        for (const auto& item : parsed->at("data")) {
+            if (item.contains("embedding") && item["embedding"].is_array()) {
+                std::vector<float> embedding;
+                for (const auto& val : item["embedding"]) {
+                    if (val.is_number()) {
+                        embedding.push_back(val.get<float>());
+                    }
+                }
+                embeddings.push_back(std::move(embedding));
+            }
+        }
+    }
+
+    if (embeddings.size() != texts.size()) {
+        ErrorInfo info;
+        info.errorType = ErrorType::UnknownError;
+        info.errorCode = 0;
+        info.message = "Embeddings count mismatch: expected " + std::to_string(texts.size()) + 
+                       ", got " + std::to_string(embeddings.size());
+        enrichErrorInfoContext(info, embeddingModelId, endpoint, std::optional<HttpRequest>{hreq});
+        throw ApiClientError(info);
+    }
+
+    return embeddings;
+}
+
+std::vector<APIClient::RerankResult> APIClient::createRerank(
+    const std::string& query,
+    const std::vector<std::string>& documents,
+    const std::string& modelId,
+    int topK
+) {
+    // 获取重排序模型配置
+    std::string rerankModelId = modelId;
+    std::string baseUrl = m_baseUrl;
+    std::string apiKey = m_apiKey;
+    int timeoutMs = m_timeoutMs;
+
+    if (rerankModelId.empty()) {
+        if (auto v = m_cfg.get("context_refinement.rerank.model_id"); v.has_value() && v->is_string()) {
+            rerankModelId = trimCopy(v->get<std::string>());
+        }
+        if (rerankModelId.empty()) {
+            rerankModelId = "BAAI/bge-reranker-large"; // 默认模型
+        }
+    }
+
+    if (topK < 0) {
+        if (auto v = m_cfg.get("context_refinement.rerank.top_k"); v.has_value()) {
+            topK = asIntOr(v, 10);
+        } else {
+            topK = 10; // 默认值
+        }
+    }
+
+    // 获取重排序API配置
+    if (auto v = m_cfg.get("context_refinement.rerank.base_url"); v.has_value() && v->is_string()) {
+        const auto s = trimCopy(v->get<std::string>());
+        if (!s.empty()) baseUrl = s;
+    }
+    if (auto v = m_cfg.get("context_refinement.rerank.api_key"); v.has_value() && v->is_string()) {
+        const auto s = trimCopy(v->get<std::string>());
+        if (!s.empty()) apiKey = s;
+    }
+
+    HttpClient client(baseUrl);
+    configureHttpClient(client, apiKey, timeoutMs);
+
+    const std::string endpoint = "/rerank";
+
+    // 构建请求体
+    nlohmann::json requestBody;
+    requestBody["model"] = rerankModelId;
+    requestBody["query"] = query;
+    requestBody["documents"] = nlohmann::json::array();
+    for (const auto& doc : documents) {
+        requestBody["documents"].push_back(doc);
+    }
+    requestBody["top_k"] = topK;
+
+    HttpRequest hreq;
+    hreq.method = HttpMethod::POST;
+    hreq.url = joinUrl(baseUrl, endpoint);
+    hreq.body = requestBody.dump();
+    hreq.timeoutMs = timeoutMs;
+    hreq.followRedirects = true;
+    if (!apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + apiKey;
+    hreq.headers["Content-Type"] = "application/json";
+    hreq.headers["Accept"] = "application/json";
+
+    const auto resp = client.execute(hreq);
+    if (!resp.isSuccess()) {
+        auto info = ErrorHandler::fromHttpResponse(resp, std::optional<HttpRequest>{hreq});
+        enrichErrorInfoContext(info, rerankModelId, endpoint, std::optional<HttpRequest>{hreq});
+        throw ApiClientError(info);
+    }
+
+    auto parsed = resp.asJson();
+    if (!parsed.has_value()) {
+        ErrorInfo info;
+        info.errorType = ErrorType::UnknownError;
+        info.errorCode = resp.statusCode;
+        info.message = "Invalid JSON response from rerank API";
+        info.details = nlohmann::json{{"body_snippet", resp.body.substr(0, 1024)}};
+        enrichErrorInfoContext(info, rerankModelId, endpoint, std::optional<HttpRequest>{hreq});
+        throw ApiClientError(info);
+    }
+
+    // 解析响应
+    std::vector<RerankResult> results;
+    if (parsed->contains("results") && parsed->at("results").is_array()) {
+        for (const auto& item : parsed->at("results")) {
+            RerankResult result;
+            if (item.contains("index") && item["index"].is_number_unsigned()) {
+                result.index = item["index"].get<size_t>();
+            } else if (item.contains("index") && item["index"].is_number_integer()) {
+                result.index = static_cast<size_t>(item["index"].get<int>());
+            }
+            if (item.contains("score") && item["score"].is_number()) {
+                result.score = item["score"].get<float>();
+            }
+            results.push_back(result);
+        }
+    }
+
+    return results;
+}
+
 } // namespace naw::desktop_pet::service
 
