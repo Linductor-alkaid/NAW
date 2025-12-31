@@ -458,6 +458,32 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
         std::vector<std::string> directories;
         uintmax_t totalSize = 0;
         
+        // 辅助函数：获取路径表示
+        // 非递归模式：只返回文件名
+        // 递归模式：返回相对于 dirPath 的相对路径（清理 ".\" 前缀）
+        auto getPathString = [&dirPath, recursive](const fs::path& entryPath) -> std::string {
+            if (!recursive) {
+                // 非递归模式：只返回文件名
+                return entryPath.filename().string();
+            } else {
+                // 递归模式：返回相对路径
+                try {
+                    fs::path relative = fs::relative(entryPath, dirPath);
+                    if (!relative.empty() && relative != entryPath) {
+                        std::string relStr = relative.string();
+                        // 移除开头的 ".\" 或 "./"
+                        if (relStr.size() >= 2 && relStr[0] == '.' && (relStr[1] == '\\' || relStr[1] == '/')) {
+                            return relStr.substr(2);
+                        }
+                        return relStr;
+                    }
+                } catch (...) {
+                    // 如果获取相对路径失败，使用文件名
+                }
+                return entryPath.filename().string();
+            }
+        };
+        
         try {
             if (recursive) {
                 fs::recursive_directory_iterator dirIter(dirPath, 
@@ -473,11 +499,11 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
                         if (fs::is_regular_file(entry)) {
                             std::string filename = entry.path().filename().string();
                             if (pattern.empty() || matchesPattern(filename, pattern)) {
-                                files.push_back(entry.path().string());
+                                files.push_back(getPathString(entry.path()));
                                 totalSize += fs::file_size(entry);
                             }
                         } else if (fs::is_directory(entry)) {
-                            directories.push_back(entry.path().string());
+                            directories.push_back(getPathString(entry.path()));
                         }
                     } catch (const fs::filesystem_error&) {
                         // 跳过权限错误等文件系统错误
@@ -494,11 +520,11 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
                         if (fs::is_regular_file(entry)) {
                             std::string filename = entry.path().filename().string();
                             if (pattern.empty() || matchesPattern(filename, pattern)) {
-                                files.push_back(entry.path().string());
+                                files.push_back(getPathString(entry.path()));
                                 totalSize += fs::file_size(entry);
                             }
                         } else if (fs::is_directory(entry)) {
-                            directories.push_back(entry.path().string());
+                            directories.push_back(getPathString(entry.path()));
                         }
                     } catch (...) {
                         // 跳过无法访问的文件

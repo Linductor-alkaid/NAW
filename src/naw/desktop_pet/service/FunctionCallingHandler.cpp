@@ -13,10 +13,9 @@ namespace naw::desktop_pet::service {
 
 // ========== 辅助函数：清理JSON中的无效UTF-8字节 ==========
 
-/**
- * @brief 清理JSON字符串中的无效UTF-8字节，将无效字节替换为替换字符
- */
-static std::string cleanUtf8String(const std::string& str) {
+// ========== UTF-8 清理工具 ==========
+
+std::string FunctionCallingHandler::cleanUtf8String(const std::string& str) {
     std::string cleaned;
     cleaned.reserve(str.size());
     
@@ -68,24 +67,21 @@ static std::string cleanUtf8String(const std::string& str) {
     return cleaned;
 }
 
-/**
- * @brief 清理JSON中的无效UTF-8字节
- */
-static nlohmann::json cleanJsonForUtf8(const nlohmann::json& j) {
+nlohmann::json FunctionCallingHandler::cleanJsonForUtf8(const nlohmann::json& j) {
     if (j.is_string()) {
-        return cleanUtf8String(j.get<std::string>());
+        return FunctionCallingHandler::cleanUtf8String(j.get<std::string>());
     } else if (j.is_array()) {
         nlohmann::json arr = nlohmann::json::array();
         for (const auto& item : j) {
-            arr.push_back(cleanJsonForUtf8(item));
+            arr.push_back(FunctionCallingHandler::cleanJsonForUtf8(item));
         }
         return arr;
     } else if (j.is_object()) {
         nlohmann::json obj = nlohmann::json::object();
         for (auto it = j.begin(); it != j.end(); ++it) {
             // 清理键和值
-            std::string cleanedKey = cleanUtf8String(it.key());
-            obj[cleanedKey] = cleanJsonForUtf8(it.value());
+            std::string cleanedKey = FunctionCallingHandler::cleanUtf8String(it.key());
+            obj[cleanedKey] = FunctionCallingHandler::cleanJsonForUtf8(it.value());
         }
         return obj;
     } else {
@@ -507,7 +503,7 @@ std::vector<types::ChatMessage> FunctionCallingHandler::buildToolResultMessages(
                 // 如果dump失败（可能是UTF-8编码问题），尝试清理JSON中的字符串
                 try {
                     // 创建一个清理后的JSON副本
-                    nlohmann::json cleaned = cleanJsonForUtf8(result.result.value());
+                    nlohmann::json cleaned = FunctionCallingHandler::cleanJsonForUtf8(result.result.value());
                     message.setText(cleaned.dump());
                 } catch (const std::exception& e2) {
                     // 如果还是失败，返回一个简化的错误信息

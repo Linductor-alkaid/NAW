@@ -43,6 +43,22 @@ struct FunctionCallResult {
  */
 class FunctionCallingHandler {
 public:
+    // ========== UTF-8 清理工具 ==========
+
+    /**
+     * @brief 清理字符串中的无效UTF-8字节
+     * @param str 输入字符串
+     * @return 清理后的字符串（无效字节替换为'?'）
+     */
+    static std::string cleanUtf8String(const std::string& str);
+
+    /**
+     * @brief 清理JSON中的无效UTF-8字节（递归处理所有字符串值）
+     * @param j JSON对象
+     * @return 清理后的JSON对象
+     */
+    static nlohmann::json cleanJsonForUtf8(const nlohmann::json& j);
+
     // ========== 工具调用检测 ==========
 
     /**
