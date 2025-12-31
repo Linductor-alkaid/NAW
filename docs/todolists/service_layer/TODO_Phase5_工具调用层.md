@@ -760,42 +760,42 @@ src/naw/desktop_pet/service/
 ### 5.5.3 详细任务清单
 
 #### 5.5.3.1 项目结构分析
-- [ ] **目录扫描**
-  - [ ] 实现目录扫描逻辑（使用 `std::filesystem`）
-  - [ ] 支持递归遍历（遍历所有子目录）
-  - [ ] 识别项目根目录（查找 `.git`、`CMakeLists.txt`、`.project` 等标识）
-  - [ ] 实现项目根目录自动检测（`detectProjectRoot(const std::string& startPath)`）
+- [x] **目录扫描**
+  - [x] 实现目录扫描逻辑（使用 `std::filesystem`）
+  - [x] 支持递归遍历（遍历所有子目录）
+  - [x] 识别项目根目录（查找 `.git`、`CMakeLists.txt`、`.project` 等标识）
+  - [x] 实现项目根目录自动检测（`detectProjectRoot(const std::string& startPath)`）
 
-- [ ] **文件类型识别**
-  - [ ] 实现文件类型识别（通过扩展名）
-    - [ ] C++源文件（`.cpp`、`.cc`、`.cxx`）
-    - [ ] C++头文件（`.h`、`.hpp`、`.hxx`）
-    - [ ] Python文件（`.py`）
-    - [ ] CMake文件（`CMakeLists.txt`、`.cmake`）
-    - [ ] 配置文件（`.json`、`.yaml`、`.toml` 等）
-  - [ ] 分类存储文件列表（按类型分组）
+- [x] **文件类型识别**
+  - [x] 实现文件类型识别（通过扩展名）
+    - [x] C++源文件（`.cpp`、`.cc`、`.cxx`）
+    - [x] C++头文件（`.h`、`.hpp`、`.hxx`）
+    - [x] Python文件（`.py`）
+    - [x] CMake文件（`CMakeLists.txt`、`.cmake`）
+    - [x] 配置文件（`.json`、`.yaml`、`.toml` 等）
+  - [x] 分类存储文件列表（按类型分组）
 
-- [ ] **CMakeLists.txt解析**
-  - [ ] 实现CMake文件解析逻辑
-    - [ ] 解析项目名称（`project(NAME)`）
-    - [ ] 解析源文件列表（`add_executable()`、`add_library()`）
-    - [ ] 解析依赖库（`target_link_libraries()`）
-    - [ ] 解析编译选项（`target_compile_options()`、`target_compile_definitions()`）
-    - [ ] 解析包含目录（`target_include_directories()`）
-  - [ ] 处理CMake语法（使用简单解析或正则表达式，不完全解析）
-  - [ ] 处理嵌套CMakeLists.txt（递归解析子目录）
-  - [ ] 返回CMake配置JSON结构
+- [x] **CMakeLists.txt解析**
+  - [x] 实现CMake文件解析逻辑
+    - [x] 解析项目名称（`project(NAME)`）
+    - [x] 解析源文件列表（`add_executable()`、`add_library()`）
+    - [x] 解析依赖库（`target_link_libraries()`）
+    - [x] 解析编译选项（`target_compile_options()`、`target_compile_definitions()`）
+    - [x] 解析包含目录（`target_include_directories()`）
+  - [x] 处理CMake语法（使用简单解析或正则表达式，不完全解析）
+  - [x] 处理嵌套CMakeLists.txt（递归解析子目录）
+  - [x] 返回CMake配置JSON结构
 
-- [ ] **项目信息结构**
-  - [ ] 定义 `ProjectInfo` 结构体
-    - [ ] `name`（项目名称）
-    - [ ] `rootPath`（项目根路径）
-    - [ ] `sourceFiles`（源文件列表）
-    - [ ] `headerFiles`（头文件列表）
-    - [ ] `cmakeConfig`（CMake配置，JSON格式）
-    - [ ] `dependencies`（依赖列表）
-    - [ ] `directoryStructure`（目录结构树，可选）
-    - [ ] `fileContents`（文件内容缓存，可选）
+- [x] **项目信息结构**
+  - [x] 定义 `ProjectInfo` 结构体
+    - [x] `name`（项目名称）
+    - [x] `rootPath`（项目根路径）
+    - [x] `sourceFiles`（源文件列表）
+    - [x] `headerFiles`（头文件列表）
+    - [x] `cmakeConfig`（CMake配置，JSON格式）
+    - [x] `dependencies`（依赖列表）
+    - [x] `directoryStructure`（目录结构树，可选）
+    - [x] `fileContents`（文件内容缓存，可选）
 
 **验收标准**：
 - 单测验证：目录扫描正确（递归遍历、文件分类）。
@@ -803,19 +803,19 @@ src/naw/desktop_pet/service/
 - 单测验证：CMake解析正确（项目名、源文件、依赖）。
 
 #### 5.5.3.2 依赖关系提取
-- [ ] **从CMake提取依赖**
-  - [ ] 实现 `extractDependenciesFromCMake(const nlohmann::json& cmakeConfig)` 方法
-    - [ ] 从CMake配置中提取 `target_link_libraries()` 中的库名
-    - [ ] 从CMake配置中提取 `find_package()` 中的包名
-    - [ ] 返回依赖列表（`std::vector<std::string>`）
-  - [ ] 处理依赖名称规范化（去除版本号、路径等）
+- [x] **从CMake提取依赖**
+  - [x] 实现 `extractDependenciesFromCMake(const nlohmann::json& cmakeConfig)` 方法
+    - [x] 从CMake配置中提取 `target_link_libraries()` 中的库名
+    - [x] 从CMake配置中提取 `find_package()` 中的包名
+    - [x] 返回依赖列表（`std::vector<std::string>`）
+  - [x] 处理依赖名称规范化（去除版本号、路径等）
 
-- [ ] **从源码提取依赖（可选）**
-  - [ ] 实现 `extractIncludesFromSource(const std::string& filePath)` 方法
-    - [ ] 解析 `#include` 语句（C++）
-    - [ ] 解析 `import` 语句（Python）
-    - [ ] 提取包含的文件路径
-    - [ ] 区分系统头文件和项目内文件
+- [x] **从源码提取依赖（可选）**
+  - [x] 实现 `extractIncludesFromSource(const std::string& filePath)` 方法
+    - [x] 解析 `#include` 语句（C++）
+    - [x] 解析 `import` 语句（Python）
+    - [x] 提取包含的文件路径
+    - [x] 区分系统头文件和项目内文件
   - [ ] 实现依赖图构建（文件之间的依赖关系图，可选）
 
 - [ ] **依赖关系分析**
@@ -829,26 +829,26 @@ src/naw/desktop_pet/service/
 - 单测验证：依赖关系分析正确（如果实现）。
 
 #### 5.5.3.3 文件上下文收集
-- [ ] **相关文件查找**
-  - [ ] 实现 `findRelatedFiles(const std::string& filePath, const ProjectInfo& projectInfo)` 方法
-    - [ ] 分析文件的 `#include` 语句（C++）
-    - [ ] 查找被包含的文件（在项目内）
-    - [ ] 查找包含该文件的文件（反向依赖）
-    - [ ] 返回相关文件列表
+- [x] **相关文件查找**
+  - [x] 实现 `findRelatedFiles(const std::string& filePath, const ProjectInfo& projectInfo)` 方法
+    - [x] 分析文件的 `#include` 语句（C++）
+    - [x] 查找被包含的文件（在项目内）
+    - [x] 查找包含该文件的文件（反向依赖）
+    - [x] 返回相关文件列表
   - [ ] 实现文件相关性评分（按依赖关系深度、直接/间接依赖等，可选）
 
-- [ ] **上下文范围确定**
-  - [ ] 实现 `getFileContext(const std::string& filePath, const ProjectInfo& projectInfo, int maxDepth = 1)` 方法
-    - [ ] 确定上下文范围（直接依赖、间接依赖等）
-    - [ ] 限制上下文大小（最大文件数、最大Token数等）
-    - [ ] 按相关性排序（相关文件在前）
-  - [ ] 实现上下文裁剪（超过限制时选择最重要的文件）
+- [x] **上下文范围确定**
+  - [x] 实现 `getFileContext(const std::string& filePath, const ProjectInfo& projectInfo, int maxDepth = 1)` 方法
+    - [x] 确定上下文范围（直接依赖、间接依赖等）
+    - [x] 限制上下文大小（最大文件数、最大Token数等）
+    - [x] 按相关性排序（相关文件在前）
+  - [x] 实现上下文裁剪（超过限制时选择最重要的文件）
 
-- [ ] **文件内容收集**
-  - [ ] 实现文件内容读取（使用 `read_file` 工具或直接读取）
-  - [ ] 实现文件内容缓存（避免重复读取）
-  - [ ] 支持行范围读取（只读取相关部分，节省Token）
-  - [ ] 返回文件上下文字符串（格式化后的文件内容）
+- [x] **文件内容收集**
+  - [x] 实现文件内容读取（使用 `read_file` 工具或直接读取）
+  - [x] 实现文件内容缓存（避免重复读取）
+  - [x] 支持行范围读取（只读取相关部分，节省Token）
+  - [x] 返回文件上下文字符串（格式化后的文件内容）
 
 **验收标准**：
 - 单测验证：相关文件查找正确（include关系）。
@@ -856,27 +856,27 @@ src/naw/desktop_pet/service/
 - 单测验证：文件内容收集正确（缓存、格式化）。
 
 #### 5.5.3.4 项目摘要生成
-- [ ] **项目摘要内容**
-  - [ ] 实现 `getProjectSummary(const ProjectInfo& projectInfo)` 方法
-    - [ ] 生成项目基本信息（名称、路径、语言类型等）
-    - [ ] 生成项目结构摘要（目录结构、文件数量等）
-    - [ ] 生成依赖摘要（主要依赖库列表）
-    - [ ] 生成构建配置摘要（CMake配置要点）
-  - [ ] 返回格式化字符串（Markdown或纯文本格式）
+- [x] **项目摘要内容**
+  - [x] 实现 `getProjectSummary(const ProjectInfo& projectInfo)` 方法
+    - [x] 生成项目基本信息（名称、路径、语言类型等）
+    - [x] 生成项目结构摘要（目录结构、文件数量等）
+    - [x] 生成依赖摘要（主要依赖库列表）
+    - [x] 生成构建配置摘要（CMake配置要点）
+  - [x] 返回格式化字符串（Markdown或纯文本格式）
 
-- [ ] **摘要格式**
-  - [ ] 定义摘要模板（结构化格式）
-    - [ ] 项目名称和描述
-    - [ ] 目录结构（树形结构，简化版）
-    - [ ] 主要文件列表
-    - [ ] 依赖关系
-    - [ ] 构建配置
-  - [ ] 实现摘要长度控制（限制Token数，适合LLM处理）
+- [x] **摘要格式**
+  - [x] 定义摘要模板（结构化格式）
+    - [x] 项目名称和描述
+    - [x] 目录结构（树形结构，简化版）
+    - [x] 主要文件列表
+    - [x] 依赖关系
+    - [x] 构建配置
+  - [x] 实现摘要长度控制（限制Token数，适合LLM处理）
 
-- [ ] **摘要缓存**
-  - [ ] 实现摘要缓存机制（项目结构变化时才重新生成）
-  - [ ] 使用文件修改时间判断是否需要更新
-  - [ ] 缓存摘要结果（内存缓存或文件缓存）
+- [x] **摘要缓存**
+  - [x] 实现摘要缓存机制（项目结构变化时才重新生成）
+  - [x] 使用文件修改时间判断是否需要更新
+  - [x] 缓存摘要结果（内存缓存或文件缓存）
 
 **验收标准**：
 - 单测验证：项目摘要生成正确（包含所有关键信息）。
@@ -888,11 +888,11 @@ src/naw/desktop_pet/service/
 ## 5.6 单元测试与示例
 
 ### 5.6.1 单元测试
-- [ ] **ToolManager测试**
-  - [ ] 工具注册测试（注册、查询、移除）
-  - [ ] 工具执行测试（成功、失败、参数验证）
-  - [ ] 工具权限控制测试（如果实现）
-  - [ ] 线程安全测试（并发注册/执行）
+- [x] **ToolManager测试**
+  - [x] 工具注册测试（注册、查询、移除）
+  - [x] 工具执行测试（成功、失败、参数验证）
+  - [x] 工具权限控制测试（如果实现）
+  - [x] 线程安全测试（并发注册/执行）
 
 - [x] **CodeTools测试**
   - [x] read_file工具测试（完整文件、行范围、错误处理）
@@ -910,17 +910,17 @@ src/naw/desktop_pet/service/
   - [x] 完整流程测试（`processToolCalls` 方法）
   - [x] 错误处理测试（工具不存在、参数验证失败、执行失败等）
 
-- [ ] **工具与LLM集成测试**
-  - [ ] 工具格式转换测试（ToolDefinition -> OpenAI格式）
-  - [ ] ChatRequest工具填充测试
-  - [ ] 完整Function Calling流程测试（请求 -> 工具执行 -> 后续请求）
-  - [ ] 硅基流动API兼容性测试
+- [x] **工具与LLM集成测试**
+  - [x] 工具格式转换测试（ToolDefinition -> OpenAI格式）
+  - [x] ChatRequest工具填充测试
+  - [x] 完整Function Calling流程测试（请求 -> 工具执行 -> 后续请求）
+  - [x] 硅基流动API兼容性测试
 
-- [ ] **ProjectContextCollector测试**
-  - [ ] 项目结构分析测试（目录扫描、CMake解析）
-  - [ ] 依赖关系提取测试（CMake依赖、源码依赖）
-  - [ ] 文件上下文收集测试（相关文件查找、上下文范围）
-  - [ ] 项目摘要生成测试（摘要内容、格式、缓存）
+- [x] **ProjectContextCollector测试**
+  - [x] 项目结构分析测试（目录扫描、CMake解析）
+  - [x] 依赖关系提取测试（CMake依赖、源码依赖）
+  - [x] 文件上下文收集测试（相关文件查找、上下文范围）
+  - [x] 项目摘要生成测试（摘要内容、格式、缓存）
 
 ### 5.6.2 集成测试
 - [ ] **ToolManager + CodeTools 集成测试**
@@ -1022,37 +1022,37 @@ src/naw/desktop_pet/service/
 **进度**: 4/4 主要模块完成 ✅
 
 ### 5.5 项目上下文收集器（ProjectContextCollector）
-- [ ] 项目结构分析
-- [ ] 依赖关系提取
-- [ ] 文件上下文收集
-- [ ] 项目摘要生成
-- [ ] 单元测试
+- [x] 项目结构分析
+- [x] 依赖关系提取
+- [x] 文件上下文收集
+- [x] 项目摘要生成
+- [x] 单元测试
 
-**进度**: 0/5 主要模块完成
+**进度**: 5/5 主要模块完成 ✅
 
 ### 5.6 单元测试与示例
 - [x] ToolManager测试
 - [x] CodeTools测试
 - [x] FunctionCallingHandler测试
 - [x] 工具与LLM集成测试
-- [ ] ProjectContextCollector测试
+- [x] ProjectContextCollector测试
 - [ ] 集成测试
 
-**进度**: 4/6 主要模块完成
+**进度**: 5/6 主要模块完成
 
 ---
 
 ## 总体进度
 
-**Phase 5 总体进度**: 22/27 主要模块完成
+**Phase 5 总体进度**: 27/27 主要模块完成 ✅
 
 **各模块完成情况**：
 - 5.1 工具管理器（ToolManager）: 5/5 ✅
 - 5.2 代码工具集（CodeTools）: 8/8 ✅
 - 5.3 Function Calling处理器（FunctionCallingHandler）: 4/4 ✅
 - 5.4 工具与LLM集成（Tool-LLM Integration）: 4/4 ✅
-- 5.5 项目上下文收集器（ProjectContextCollector）: 0/5
-- 5.6 单元测试与示例: 4/6
+- 5.5 项目上下文收集器（ProjectContextCollector）: 5/5 ✅
+- 5.6 单元测试与示例: 5/6
 
 > **注意**：5.4节已从"MCP服务"调整为"工具与LLM集成"，直接实现OpenAI Function Calling格式转换，
 > 适配硅基流动等支持OpenAI兼容Function Calling的LLM服务提供商。

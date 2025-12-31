@@ -1,11 +1,13 @@
 #include "naw/desktop_pet/service/ContextManager.h"
 
 #include "naw/desktop_pet/service/ErrorHandler.h"
+#include "naw/desktop_pet/service/ProjectContextCollector.h"
 #include "naw/desktop_pet/service/ToolManager.h"
 #include "naw/desktop_pet/service/types/RequestResponse.h"
 #include "naw/desktop_pet/service/types/TaskType.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <sstream>
 
 namespace naw::desktop_pet::service {
@@ -260,9 +262,32 @@ std::vector<types::ChatMessage> ContextManager::buildContext(
 
     // 3. 项目上下文（如果启用）
     if (config.includeProjectContext) {
-        // 这里需要从外部获取ProjectContext，暂时跳过
-        // ProjectContext projectContext = getProjectContext();
-        // messages.push_back(buildProjectContext(projectContext, config.taskType));
+        try {
+            ProjectContextCollector collector;
+            ErrorInfo error;
+            
+            // 确定项目路径
+            std::string projectRoot;
+            if (config.projectPath.has_value() && !config.projectPath->empty()) {
+                projectRoot = *config.projectPath;
+            } else {
+                // 自动检测项目根目录（从当前工作目录）
+                projectRoot = ProjectContextCollector::detectProjectRoot(
+                    std::filesystem::current_path().string()
+                );
+            }
+            
+            // 收集项目上下文
+            ProjectContext projectContext = collector.collectProjectContext(projectRoot, &error);
+            
+            // 如果收集成功，添加到消息列表
+            if (error.message.empty() && !projectContext.projectRoot.empty()) {
+                messages.push_back(buildProjectContext(projectContext, config.taskType));
+            }
+            // 如果收集失败，静默忽略（不中断流程）
+        } catch (...) {
+            // 如果发生异常，静默忽略（不中断流程）
+        }
     }
 
     // 4. 代码上下文（如果启用）

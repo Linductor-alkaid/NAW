@@ -57,6 +57,7 @@ struct ContextConfig {
     bool includeCodeContext{false};         // 是否包含代码上下文
     bool includeMemoryEvents{false};        // 是否包含记忆事件
     size_t maxHistoryMessages{50};          // 最大历史消息数
+    std::optional<std::string> projectPath;  // 项目路径（可选，如果为空则自动检测）
 };
 
 /**
