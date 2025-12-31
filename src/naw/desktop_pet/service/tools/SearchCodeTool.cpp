@@ -8,80 +8,171 @@
 #include <regex>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <thread>
 #include <mutex>
 #include <algorithm>
 #include <cstring>
+#include <atomic>
+#include <optional>
 
 namespace fs = std::filesystem;
 using namespace naw::desktop_pet::service;
 using namespace naw::desktop_pet::service::tools;
 
-// 优化1: 快速字符串搜索 (Boyer-Moore-Horspool算法的简化版)
-class FastStringMatcher {
+// 优化1: 快速UTF-8字符边界检查(内联优化)
+inline bool isUtf8CharStart(unsigned char c) {
+    return (c & 0xC0) != 0x80;  // 简化检查: 非继续字节
+}
+
+// 优化2: 使用string_view进行零拷贝行分割
+struct LineView {
+    std::string_view line;
+    size_t lineNumber;
+    size_t byteOffset;
+};
+
+static std::vector<LineView> splitLinesView(std::string_view content) {
+    std::vector<LineView> lines;
+    lines.reserve(content.size() / 80);  // 预估平均行长
+    
+    size_t lineStart = 0;
+    size_t lineNumber = 1;
+    
+    for (size_t i = 0; i < content.size(); ++i) {
+        if (content[i] == '\n') {
+            size_t lineEnd = i;
+            if (lineEnd > lineStart && content[lineEnd - 1] == '\r') {
+                lineEnd--;
+            }
+            
+            if (lineEnd > lineStart) {
+                lines.push_back({
+                    content.substr(lineStart, lineEnd - lineStart),
+                    lineNumber,
+                    lineStart
+                });
+            }
+            
+            lineStart = i + 1;
+            lineNumber++;
+        }
+    }
+    
+    // 处理最后一行
+    if (lineStart < content.size()) {
+        lines.push_back({
+            content.substr(lineStart),
+            lineNumber,
+            lineStart
+        });
+    }
+    
+    return lines;
+}
+
+// 优化3: 简化的字符串匹配器(针对普通字符串搜索)
+class OptimizedStringMatcher {
 private:
     std::string pattern;
-    std::vector<size_t> badCharShift;
+    std::string lowerPattern;
     bool caseSensitive;
-    
-    void buildBadCharTable() {
-        size_t patLen = pattern.length();
-        badCharShift.assign(256, patLen);
-        
-        for (size_t i = 0; i < patLen - 1; ++i) {
-            unsigned char c = static_cast<unsigned char>(
-                caseSensitive ? pattern[i] : std::tolower(pattern[i])
-            );
-            badCharShift[c] = patLen - 1 - i;
-        }
-    }
+    size_t patternLen;
     
 public:
-    FastStringMatcher(const std::string& pat, bool cs) 
-        : pattern(pat), caseSensitive(cs) {
+    OptimizedStringMatcher(const std::string& pat, bool cs) 
+        : pattern(pat), caseSensitive(cs), patternLen(pat.length()) {
         if (!caseSensitive) {
-            std::transform(pattern.begin(), pattern.end(), pattern.begin(), ::tolower);
+            lowerPattern = pattern;
+            std::transform(lowerPattern.begin(), lowerPattern.end(), 
+                          lowerPattern.begin(), ::tolower);
         }
-        buildBadCharTable();
     }
     
-    // 快速字符串搜索
-    size_t search(const char* text, size_t textLen) const {
-        if (pattern.empty() || textLen < pattern.length()) {
+    // 快速字符串搜索(使用标准库优化)
+    size_t search(std::string_view text) const {
+        if (patternLen == 0 || text.size() < patternLen) {
             return std::string::npos;
         }
         
-        size_t patLen = pattern.length();
-        size_t i = patLen - 1;
-        
-        while (i < textLen) {
-            size_t j = patLen - 1;
-            size_t k = i;
-            
-            while (j < patLen) {
-                char textChar = caseSensitive ? text[k] : std::tolower(text[k]);
-                if (textChar != pattern[j]) {
-                    break;
+        if (caseSensitive) {
+            auto pos = text.find(pattern);
+            return pos;
+        } else {
+            // 大小写不敏感搜索
+            for (size_t i = 0; i <= text.size() - patternLen; ++i) {
+                bool match = true;
+                for (size_t j = 0; j < patternLen; ++j) {
+                    if (std::tolower(static_cast<unsigned char>(text[i + j])) != 
+                        static_cast<unsigned char>(lowerPattern[j])) {
+                        match = false;
+                        break;
+                    }
                 }
-                if (j == 0) {
-                    return k;
+                if (match) {
+                    return i;
                 }
-                --j;
-                --k;
             }
-            
-            unsigned char bc = static_cast<unsigned char>(
-                caseSensitive ? text[i] : std::tolower(text[i])
-            );
-            i += badCharShift[bc];
+            return std::string::npos;
         }
-        
-        return std::string::npos;
     }
 };
 
-// 优化2: 批量读取文件内容
+// 辅助函数: 移除字符串中的空字节和其他控制字符
+static std::string removeNullBytes(std::string_view input) {
+    std::string result;
+    result.reserve(input.size());
+    
+    for (char c : input) {
+        // 跳过空字节和其他危险的控制字符
+        if (c == '\0') {
+            continue;
+        }
+        // 保留常见的控制字符(换行、制表符等)
+        if (c == '\n' || c == '\r' || c == '\t' || 
+            (c >= 32 && c <= 126) || static_cast<unsigned char>(c) >= 128) {
+            result += c;
+        } else {
+            // 其他控制字符替换为空格
+            result += ' ';
+        }
+    }
+    
+    return result;
+}
+
+// 辅助函数: 检查内容是否可能是二进制文件
+static bool isBinaryContent(std::string_view content, size_t sampleSize = 512) {
+    size_t checkSize = std::min(content.size(), sampleSize);
+    int nullCount = 0;
+    int controlCount = 0;
+    
+    for (size_t i = 0; i < checkSize; ++i) {
+        unsigned char c = static_cast<unsigned char>(content[i]);
+        if (c == 0) {
+            nullCount++;
+        } else if (c < 32 && c != '\n' && c != '\r' && c != '\t') {
+            controlCount++;
+        }
+    }
+    
+    // 如果空字节或控制字符超过5%，认为是二进制文件
+    return (nullCount + controlCount) > static_cast<int>(checkSize * 0.05);
+}
+
+// 优化4: 计算UTF-8字符位置(优化版)
+static int calculateUtf8Column(std::string_view line, size_t bytePos) {
+    int column = 1;
+    for (size_t i = 0; i < bytePos && i < line.size(); ++i) {
+        if (isUtf8CharStart(static_cast<unsigned char>(line[i]))) {
+            column++;
+        }
+    }
+    return column;
+}
+
+// 优化5: 批量读取文件(保持原有编码处理 + 二进制过滤)
 static std::string readFileContent(const fs::path& filePath, size_t maxSize = 10 * 1024 * 1024) {
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
@@ -94,123 +185,128 @@ static std::string readFileContent(const fs::path& filePath, size_t maxSize = 10
     }
     
     file.seekg(0, std::ios::beg);
-    std::string content(size, '\0');
-    if (!file.read(&content[0], size)) {
+    std::vector<unsigned char> rawContent(static_cast<size_t>(size));
+    if (!file.read(reinterpret_cast<char*>(rawContent.data()), size)) {
         return "";
     }
     
-    return content;
+    // 快速检查是否为二进制文件
+    std::string_view contentView(reinterpret_cast<char*>(rawContent.data()), rawContent.size());
+    if (isBinaryContent(contentView)) {
+        return "";  // 跳过二进制文件
+    }
+    
+    // 检测文件编码
+    FileEncoding encoding = detectFileEncoding(rawContent);
+    
+    // 转换为UTF-8
+    auto utf8Content = convertToUtf8(rawContent, encoding);
+    if (!utf8Content.has_value()) {
+        std::string content(rawContent.begin(), rawContent.end());
+        content = removeNullBytes(content);  // 移除空字节
+        return sanitizeUtf8String(content);
+    }
+    
+    auto [result, isValid] = validateAndFixUtf8(utf8Content.value());
+    result = removeNullBytes(result);  // 确保移除所有空字节
+    return result;
 }
 
-// 优化3: 在内存中快速搜索所有匹配
+// 优化6: 在内存中快速搜索(使用string_view和线程本地缓冲)
 static void searchInContent(
-    const std::string& content,
+    std::string_view content,
     const std::string& query,
     bool useRegex,
     bool caseSensitive,
     const fs::path& filePath,
     const fs::path& searchDir,
-    std::vector<nlohmann::json>& matches,
-    std::mutex& matchesMutex
+    std::vector<nlohmann::json>& localMatches  // 使用线程本地缓冲
 ) {
-    std::vector<nlohmann::json> localMatches;
+    // 准备文件路径字符串
+    std::string filePathStr;
+    try {
+        fs::path relPath = fs::relative(filePath, searchDir);
+        filePathStr = sanitizeUtf8String(pathToUtf8String(relPath));
+    } catch (...) {
+        filePathStr = sanitizeUtf8String(pathToUtf8String(filePath.filename()));
+    }
+    
+    // 分割行(零拷贝)
+    auto lines = splitLinesView(content);
     
     if (useRegex) {
         // 正则表达式搜索
         std::regex searchRegex;
         try {
             searchRegex = caseSensitive ? 
-                std::regex(query) : 
-                std::regex(query, std::regex::icase);
+                std::regex(query, std::regex::optimize) :  // 添加optimize标志
+                std::regex(query, std::regex::icase | std::regex::optimize);
         } catch (...) {
             return;
         }
         
-        size_t lineStart = 0;
-        int lineNumber = 1;
-        
-        for (size_t i = 0; i <= content.length(); ++i) {
-            if (i == content.length() || content[i] == '\n') {
-                std::string line = content.substr(lineStart, i - lineStart);
-                
-                try {
-                    std::smatch match;
-                    if (std::regex_search(line, match, searchRegex)) {
-                        nlohmann::json matchResult;
-                        // 使用相对路径，并清理UTF-8字符串
-                        try {
-                            fs::path relPath = fs::relative(filePath, searchDir);
-                            std::string pathStr = sanitizeUtf8String(pathToUtf8String(relPath));
-                            matchResult["file"] = pathStr;
-                        } catch (...) {
-                            // 如果计算相对路径失败，使用文件名
-                            matchResult["file"] = sanitizeUtf8String(pathToUtf8String(filePath.filename()));
-                        }
-                        matchResult["line"] = lineNumber;
-                        matchResult["column"] = static_cast<int>(match.position()) + 1;
-                        matchResult["context"] = sanitizeUtf8String(line);
-                        localMatches.push_back(matchResult);
+        for (const auto& [line, lineNumber, byteOffset] : lines) {
+            try {
+                // 使用cmatch避免临时string分配
+                std::match_results<std::string_view::const_iterator> match;
+                if (std::regex_search(line.begin(), line.end(), match, searchRegex)) {
+                    nlohmann::json matchResult;
+                    matchResult["file"] = filePathStr;
+                    matchResult["line"] = lineNumber;
+                    
+                    size_t matchBytePos = match.position();
+                    matchResult["column"] = calculateUtf8Column(line, matchBytePos);
+                    
+                    // 清理上下文，移除空字节
+                    std::string context = removeNullBytes(line);
+                    // 限制上下文长度，避免过长
+                    if (context.length() > 500) {
+                        context = context.substr(0, 500) + "...";
                     }
-                } catch (...) {
-                    // 跳过匹配错误
+                    matchResult["context"] = sanitizeUtf8String(context);
+                    
+                    localMatches.push_back(std::move(matchResult));
                 }
-                
-                lineStart = i + 1;
-                lineNumber++;
+            } catch (...) {
+                // 跳过匹配错误
             }
         }
     } else {
         // 优化的字符串搜索
-        FastStringMatcher matcher(query, caseSensitive);
+        OptimizedStringMatcher matcher(query, caseSensitive);
         
-        size_t lineStart = 0;
-        int lineNumber = 1;
-        
-        for (size_t i = 0; i <= content.length(); ++i) {
-            if (i == content.length() || content[i] == '\n') {
-                size_t lineLen = i - lineStart;
+        for (const auto& [line, lineNumber, byteOffset] : lines) {
+            if (!line.empty()) {
+                size_t pos = matcher.search(line);
                 
-                if (lineLen > 0) {
-                    size_t pos = matcher.search(content.c_str() + lineStart, lineLen);
+                if (pos != std::string::npos) {
+                    nlohmann::json matchResult;
+                    matchResult["file"] = filePathStr;
+                    matchResult["line"] = lineNumber;
+                    matchResult["column"] = calculateUtf8Column(line, pos);
                     
-                    if (pos != std::string::npos) {
-                        std::string line = content.substr(lineStart, lineLen);
-                        
-                        nlohmann::json matchResult;
-                        // 使用相对路径，并清理UTF-8字符串
-                        try {
-                            fs::path relPath = fs::relative(filePath, searchDir);
-                            std::string pathStr = sanitizeUtf8String(pathToUtf8String(relPath));
-                            matchResult["file"] = pathStr;
-                        } catch (...) {
-                            // 如果计算相对路径失败，使用文件名
-                            matchResult["file"] = sanitizeUtf8String(pathToUtf8String(filePath.filename()));
-                        }
-                        matchResult["line"] = lineNumber;
-                        matchResult["column"] = static_cast<int>(pos) + 1;
-                        matchResult["context"] = sanitizeUtf8String(line);
-                        localMatches.push_back(matchResult);
+                    // 清理上下文，移除空字节
+                    std::string context = removeNullBytes(line);
+                    // 限制上下文长度
+                    if (context.length() > 500) {
+                        context = context.substr(0, 500) + "...";
                     }
+                    matchResult["context"] = sanitizeUtf8String(context);
+                    
+                    localMatches.push_back(std::move(matchResult));
                 }
-                
-                lineStart = i + 1;
-                lineNumber++;
             }
         }
     }
-    
-    if (!localMatches.empty()) {
-        std::lock_guard<std::mutex> lock(matchesMutex);
-        matches.insert(matches.end(), localMatches.begin(), localMatches.end());
-    }
 }
 
-// 优化4: 收集所有待搜索文件
+// 优化7: 收集文件(保持原有逻辑)
 static std::vector<fs::path> collectFiles(
     const fs::path& dirPath,
     const std::string& filePattern
 ) {
     std::vector<fs::path> files;
+    files.reserve(1000);  // 预分配空间
     
     try {
         fs::recursive_directory_iterator dirIter(dirPath, 
@@ -253,7 +349,7 @@ static std::vector<fs::path> collectFiles(
     return files;
 }
 
-// 优化5: 并行处理文件
+// 优化8: 并行处理文件(减少锁竞争)
 static void processFilesParallel(
     const std::vector<fs::path>& files,
     const std::string& query,
@@ -266,7 +362,7 @@ static void processFilesParallel(
     std::mutex matchesMutex;
     unsigned int numThreads = std::max(1u, std::thread::hardware_concurrency());
     
-    // 对于少量文件，不使用多线程
+    // 对于少量文件,不使用多线程
     if (files.size() < 10) {
         numThreads = 1;
     }
@@ -283,6 +379,10 @@ static void processFilesParallel(
         }
         
         threads.emplace_back([&, startIdx, endIdx]() {
+            // 线程本地缓冲,减少锁竞争
+            std::vector<nlohmann::json> threadLocalMatches;
+            threadLocalMatches.reserve(100);
+            
             for (size_t i = startIdx; i < endIdx; ++i) {
                 try {
                     std::string content = readFileContent(files[i]);
@@ -292,12 +392,20 @@ static void processFilesParallel(
                     
                     filesSearched++;
                     searchInContent(content, query, useRegex, caseSensitive, 
-                                  files[i], searchDir, matches, matchesMutex);
+                                  files[i], searchDir, threadLocalMatches);
                                   
                 } catch (...) {
                     // 跳过处理错误的文件
                     continue;
                 }
+            }
+            
+            // 批量合并结果,减少锁竞争
+            if (!threadLocalMatches.empty()) {
+                std::lock_guard<std::mutex> lock(matchesMutex);
+                matches.insert(matches.end(), 
+                             std::make_move_iterator(threadLocalMatches.begin()),
+                             std::make_move_iterator(threadLocalMatches.end()));
             }
         });
     }
@@ -309,6 +417,28 @@ static void processFilesParallel(
     }
 }
 
+// 辅助函数:深度清理JSON对象(保持原有逻辑)
+static nlohmann::json deepCleanJson(const nlohmann::json& j) {
+    if (j.is_string()) {
+        return sanitizeUtf8String(j.get<std::string>());
+    } else if (j.is_array()) {
+        nlohmann::json cleanedArray = nlohmann::json::array();
+        for (const auto& item : j) {
+            cleanedArray.push_back(deepCleanJson(item));
+        }
+        return cleanedArray;
+    } else if (j.is_object()) {
+        nlohmann::json cleanedObj = nlohmann::json::object();
+        for (auto it = j.begin(); it != j.end(); ++it) {
+            std::string key = sanitizeUtf8String(it.key());
+            cleanedObj[key] = deepCleanJson(it.value());
+        }
+        return cleanedObj;
+    } else {
+        return j;
+    }
+}
+
 static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
     try {
         // 提取参数
@@ -316,16 +446,25 @@ static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
             return nlohmann::json{{"error", "缺少必需参数: query"}};
         }
         
-        std::string query = arguments["query"].get<std::string>();
+        // 验证并清理查询字符串
+        std::string rawQuery = arguments["query"].get<std::string>();
+        auto [query, queryValid] = validateAndFixUtf8(rawQuery);
+        if (query.empty()) {
+            return nlohmann::json{{"error", "查询字符串包含无效的UTF-8编码"}};
+        }
         
         std::string directory = ".";
         if (arguments.contains("directory") && arguments["directory"].is_string()) {
-            directory = arguments["directory"].get<std::string>();
+            std::string rawDir = arguments["directory"].get<std::string>();
+            auto [cleanedDir, dirValid] = validateAndFixUtf8(rawDir);
+            directory = cleanedDir.empty() ? "." : cleanedDir;
         }
         
         std::string filePattern;
         if (arguments.contains("file_pattern") && arguments["file_pattern"].is_string()) {
-            filePattern = arguments["file_pattern"].get<std::string>();
+            std::string rawPattern = arguments["file_pattern"].get<std::string>();
+            auto [cleanedPattern, patternValid] = validateAndFixUtf8(rawPattern);
+            filePattern = cleanedPattern;
         }
         
         bool caseSensitive = false;
@@ -337,16 +476,18 @@ static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
         
         // 检查目录是否存在
         if (!fs::exists(dirPath) || !fs::is_directory(dirPath)) {
-            return nlohmann::json{{"error", "目录不存在或不是目录: " + directory}};
+            std::string errorMsg = "目录不存在或不是目录: " + sanitizeUtf8String(directory);
+            return nlohmann::json{{"error", errorMsg}};
         }
         
         // 判断是否使用正则表达式
         bool useRegex = false;
-        // 先检查是否包含正则特殊字符
         if (query.find_first_of(".*+?[]{}()^$|\\") != std::string::npos) {
-            // 如果包含正则特殊字符，才尝试构造正则表达式进行验证
             try {
-                std::regex testRegex(query);
+                if (!isValidUtf8(query)) {
+                    return nlohmann::json{{"error", "正则表达式模式包含无效的UTF-8编码"}};
+                }
+                std::regex testRegex(query, std::regex::optimize);
                 useRegex = true;
             } catch (...) {
                 return nlohmann::json{{"error", "无效的正则表达式"}};
@@ -366,52 +507,34 @@ static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
         
         // 步骤2: 并行搜索
         std::vector<nlohmann::json> matches;
+        matches.reserve(files.size() * 2);  // 预分配空间
         std::atomic<int> filesSearched(0);
         
         processFilesParallel(files, query, useRegex, caseSensitive, 
                            dirPath, matches, filesSearched);
         
-        nlohmann::json result;
-        result["matches"] = matches;
-        result["total_matches"] = matches.size();
-        result["files_searched"] = filesSearched.load();
-        
-        // 验证结果可以序列化，如果失败则进行深度清理
-        try {
-            std::string test = result.dump();
-            // 如果序列化成功，直接返回
-            return result;
-        } catch (...) {
-            // 序列化失败，对 matches 中的每个条目进行深度清理
-            nlohmann::json cleanedResult;
-            nlohmann::json cleanedMatches = nlohmann::json::array();
-            
-            for (const auto& match : matches) {
-                nlohmann::json cleanedMatch;
-                if (match.contains("file") && match["file"].is_string()) {
-                    cleanedMatch["file"] = sanitizeUtf8String(match["file"].get<std::string>());
-                }
-                if (match.contains("line") && match["line"].is_number()) {
-                    cleanedMatch["line"] = match["line"];
-                }
-                if (match.contains("column") && match["column"].is_number()) {
-                    cleanedMatch["column"] = match["column"];
-                }
-                if (match.contains("context") && match["context"].is_string()) {
-                    cleanedMatch["context"] = sanitizeUtf8String(match["context"].get<std::string>());
-                }
-                cleanedMatches.push_back(cleanedMatch);
+        // 步骤3: 深度清理所有匹配结果
+        nlohmann::json cleanedMatches = nlohmann::json::array();
+        for (auto& match : matches) {
+            try {
+                nlohmann::json cleanedMatch = deepCleanJson(match);
+                cleanedMatches.push_back(std::move(cleanedMatch));
+            } catch (...) {
+                continue;
             }
-            
-            cleanedResult["matches"] = cleanedMatches;
-            cleanedResult["total_matches"] = cleanedMatches.size();
-            cleanedResult["files_searched"] = filesSearched.load();
-            
-            return cleanedResult;
         }
         
+        // 构建结果
+        nlohmann::json result;
+        result["matches"] = std::move(cleanedMatches);
+        result["total_matches"] = result["matches"].size();
+        result["files_searched"] = filesSearched.load();
+        
+        return result;
+        
     } catch (const std::exception& e) {
-        return nlohmann::json{{"error", std::string("搜索代码失败: ") + e.what()}};
+        std::string errorMsg = "搜索代码失败: " + sanitizeUtf8String(e.what());
+        return nlohmann::json{{"error", errorMsg}};
     } catch (...) {
         return nlohmann::json{{"error", "搜索代码时发生未知错误"}};
     }
