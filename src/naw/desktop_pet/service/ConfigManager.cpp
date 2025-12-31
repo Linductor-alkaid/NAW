@@ -316,8 +316,8 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
         {"name", "NAW"}
     };
     j["context_refinement"] = {
-        {"_comment", "Context refinement using embeddings and rerank models"},
-        {"enabled", true},
+        {"_comment", "Context refinement using embeddings and rerank models (currently disabled)"},
+        {"enabled", false},
         {"threshold_chars", 5000},
         {"threshold_tokens", 500},
         {"chunk_size", 500},

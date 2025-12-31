@@ -13,8 +13,10 @@ namespace naw::desktop_pet::service {
 /**
  * @brief 上下文信息提纯器
  * 
- * 使用嵌入模型和重排序模型对过长或包含无用信息的上下文进行智能提纯。
+ * 对过长或包含无用信息的上下文进行提纯。
  * 支持对工具输出、项目上下文、代码上下文等进行优化。
+ * 
+ * 注意：嵌入模型和重排序模型的使用已暂时禁用，当前使用简单的分块选择策略。
  */
 class ContextRefiner {
 public:
@@ -30,7 +32,7 @@ public:
     /**
      * @brief 提纯上下文内容
      * @param text 原始文本
-     * @param query 查询文本（用于重排序，可选）
+     * @param query 查询文本（已禁用，保留参数以保持接口兼容性）
      * @param error 错误信息输出（可选）
      * @return 提纯后的文本，如果失败或不需要提纯则返回原始文本
      */
@@ -78,7 +80,7 @@ private:
     APIClient& m_apiClient;
 
     // 配置缓存
-    bool m_enabled{true};
+    bool m_enabled{false};  // 默认禁用上下文提纯功能
     size_t m_thresholdChars{2000};
     size_t m_thresholdTokens{500};
     size_t m_chunkSize{500};

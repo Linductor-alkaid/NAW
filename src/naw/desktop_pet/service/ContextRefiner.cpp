@@ -94,32 +94,15 @@ std::string ContextRefiner::refineContext(
             return text;
         }
 
-        // 如果没有查询文本，使用原始文本的前一部分作为查询
-        std::string queryText = query.value_or(text.substr(0, std::min<size_t>(200, text.size())));
-
-        // 重排序
-        std::vector<APIClient::RerankResult> rerankResults;
-        try {
-            rerankResults = m_apiClient.createRerank(queryText, chunks, "", m_topK);
-        } catch (const APIClient::ApiClientError& e) {
-            // API调用失败，记录错误但继续处理
-            if (error) {
-                *error = e.errorInfo();
-            }
-            // 回退到原始文本
-            return text;
-        } catch (...) {
-            // 其他异常，回退到原始文本
-            if (error) {
-                error->errorType = ErrorType::UnknownError;
-                error->errorCode = 0;
-                error->message = "Unknown error during rerank";
-            }
-            return text;
+        // ========== 嵌入模型和重排序模型已禁用 ==========
+        // 使用简单策略：直接选择前 topK 个块
+        // 如果块数少于 topK，则返回所有块
+        
+        std::vector<size_t> selectedIndices;
+        size_t maxChunks = std::min<size_t>(static_cast<size_t>(m_topK), chunks.size());
+        for (size_t i = 0; i < maxChunks; ++i) {
+            selectedIndices.push_back(i);
         }
-
-        // 自适应筛选
-        std::vector<size_t> selectedIndices = adaptiveFilter(chunks, rerankResults);
 
         // 构建提纯后的文本
         if (selectedIndices.empty()) {

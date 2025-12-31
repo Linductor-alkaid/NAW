@@ -109,6 +109,7 @@ static void searchInContent(
     bool useRegex,
     bool caseSensitive,
     const fs::path& filePath,
+    const fs::path& searchDir,
     std::vector<nlohmann::json>& matches,
     std::mutex& matchesMutex
 ) {
@@ -136,10 +137,18 @@ static void searchInContent(
                     std::smatch match;
                     if (std::regex_search(line, match, searchRegex)) {
                         nlohmann::json matchResult;
-                        matchResult["file"] = pathToUtf8String(filePath);
+                        // 使用相对路径，并清理UTF-8字符串
+                        try {
+                            fs::path relPath = fs::relative(filePath, searchDir);
+                            std::string pathStr = sanitizeUtf8String(pathToUtf8String(relPath));
+                            matchResult["file"] = pathStr;
+                        } catch (...) {
+                            // 如果计算相对路径失败，使用文件名
+                            matchResult["file"] = sanitizeUtf8String(pathToUtf8String(filePath.filename()));
+                        }
                         matchResult["line"] = lineNumber;
                         matchResult["column"] = static_cast<int>(match.position()) + 1;
-                        matchResult["context"] = line;
+                        matchResult["context"] = sanitizeUtf8String(line);
                         localMatches.push_back(matchResult);
                     }
                 } catch (...) {
@@ -168,10 +177,18 @@ static void searchInContent(
                         std::string line = content.substr(lineStart, lineLen);
                         
                         nlohmann::json matchResult;
-                        matchResult["file"] = pathToUtf8String(filePath);
+                        // 使用相对路径，并清理UTF-8字符串
+                        try {
+                            fs::path relPath = fs::relative(filePath, searchDir);
+                            std::string pathStr = sanitizeUtf8String(pathToUtf8String(relPath));
+                            matchResult["file"] = pathStr;
+                        } catch (...) {
+                            // 如果计算相对路径失败，使用文件名
+                            matchResult["file"] = sanitizeUtf8String(pathToUtf8String(filePath.filename()));
+                        }
                         matchResult["line"] = lineNumber;
                         matchResult["column"] = static_cast<int>(pos) + 1;
-                        matchResult["context"] = line;
+                        matchResult["context"] = sanitizeUtf8String(line);
                         localMatches.push_back(matchResult);
                     }
                 }
@@ -242,6 +259,7 @@ static void processFilesParallel(
     const std::string& query,
     bool useRegex,
     bool caseSensitive,
+    const fs::path& searchDir,
     std::vector<nlohmann::json>& matches,
     std::atomic<int>& filesSearched
 ) {
@@ -274,7 +292,7 @@ static void processFilesParallel(
                     
                     filesSearched++;
                     searchInContent(content, query, useRegex, caseSensitive, 
-                                  files[i], matches, matchesMutex);
+                                  files[i], searchDir, matches, matchesMutex);
                                   
                 } catch (...) {
                     // 跳过处理错误的文件
@@ -324,14 +342,15 @@ static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
         
         // 判断是否使用正则表达式
         bool useRegex = false;
-        try {
-            std::regex testRegex(query);
-            // 如果包含正则特殊字符，使用正则模式
-            if (query.find_first_of(".*+?[]{}()^$|\\") != std::string::npos) {
+        // 先检查是否包含正则特殊字符
+        if (query.find_first_of(".*+?[]{}()^$|\\") != std::string::npos) {
+            // 如果包含正则特殊字符，才尝试构造正则表达式进行验证
+            try {
+                std::regex testRegex(query);
                 useRegex = true;
+            } catch (...) {
+                return nlohmann::json{{"error", "无效的正则表达式"}};
             }
-        } catch (...) {
-            return nlohmann::json{{"error", "无效的正则表达式"}};
         }
         
         // 步骤1: 收集所有文件
@@ -350,14 +369,46 @@ static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
         std::atomic<int> filesSearched(0);
         
         processFilesParallel(files, query, useRegex, caseSensitive, 
-                           matches, filesSearched);
+                           dirPath, matches, filesSearched);
         
         nlohmann::json result;
         result["matches"] = matches;
         result["total_matches"] = matches.size();
         result["files_searched"] = filesSearched.load();
         
-        return result;
+        // 验证结果可以序列化，如果失败则进行深度清理
+        try {
+            std::string test = result.dump();
+            // 如果序列化成功，直接返回
+            return result;
+        } catch (...) {
+            // 序列化失败，对 matches 中的每个条目进行深度清理
+            nlohmann::json cleanedResult;
+            nlohmann::json cleanedMatches = nlohmann::json::array();
+            
+            for (const auto& match : matches) {
+                nlohmann::json cleanedMatch;
+                if (match.contains("file") && match["file"].is_string()) {
+                    cleanedMatch["file"] = sanitizeUtf8String(match["file"].get<std::string>());
+                }
+                if (match.contains("line") && match["line"].is_number()) {
+                    cleanedMatch["line"] = match["line"];
+                }
+                if (match.contains("column") && match["column"].is_number()) {
+                    cleanedMatch["column"] = match["column"];
+                }
+                if (match.contains("context") && match["context"].is_string()) {
+                    cleanedMatch["context"] = sanitizeUtf8String(match["context"].get<std::string>());
+                }
+                cleanedMatches.push_back(cleanedMatch);
+            }
+            
+            cleanedResult["matches"] = cleanedMatches;
+            cleanedResult["total_matches"] = cleanedMatches.size();
+            cleanedResult["files_searched"] = filesSearched.load();
+            
+            return cleanedResult;
+        }
         
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", std::string("搜索代码失败: ") + e.what()}};

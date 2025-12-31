@@ -18,6 +18,10 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CodeTools.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/CodeToolsUtils.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/CMakeParser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/GitIgnoreParser.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/ProjectWhitelist.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tools/ProjectStructureCache.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/ReadFileTool.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/WriteFileTool.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tools/ListFilesTool.cpp
@@ -44,6 +48,10 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CodeTools.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/tools/CodeToolsUtils.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/tools/CMakeParser.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/tools/GitIgnoreParser.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/tools/ProjectWhitelist.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/tools/ProjectStructureCache.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/FunctionCallingHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolCallContext.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ProjectContextCollector.h

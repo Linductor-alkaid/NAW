@@ -39,5 +39,12 @@ std::vector<std::string> readFileLines(const fs::path& path, int startLine = 0, 
  */
 int countFileLines(const fs::path& path);
 
+/**
+ * @brief 清理字符串中的无效UTF-8字节，确保可以安全地放入JSON
+ * @param str 输入字符串
+ * @return 清理后的UTF-8字符串
+ */
+std::string sanitizeUtf8String(const std::string& str);
+
 } // namespace naw::desktop_pet::service::tools
 
