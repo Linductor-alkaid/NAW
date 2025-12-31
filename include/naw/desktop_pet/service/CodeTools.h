@@ -48,6 +48,11 @@ private:
     static void registerGetProjectStructureTool(ToolManager& toolManager);
 
     /**
+     * @brief 注册 quick_project_scan 工具（可选）
+     */
+    static void registerQuickProjectScanTool(ToolManager& toolManager);
+
+    /**
      * @brief 注册 analyze_code 工具
      */
     static void registerAnalyzeCodeTool(ToolManager& toolManager);
