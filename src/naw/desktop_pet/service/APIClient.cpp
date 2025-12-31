@@ -98,6 +98,55 @@ std::string APIClient::getApiKeyRedacted() const {
     return ConfigManager::redactSensitive("api.api_key", m_apiKey);
 }
 
+APIClient::ApiConfig APIClient::getApiConfigForModel(const std::string& modelId) const {
+    ApiConfig config;
+    config.baseUrl = m_baseUrl;  // 默认值
+    config.apiKey = m_apiKey;    // 默认值
+    config.timeoutMs = m_timeoutMs; // 默认值
+
+    // 1. 从 models 数组中查找模型配置
+    if (auto modelsNode = m_cfg.get("models"); modelsNode.has_value() && modelsNode->is_array()) {
+        for (const auto& modelNode : *modelsNode) {
+            if (!modelNode.is_object()) continue;
+            if (!modelNode.contains("model_id") || !modelNode["model_id"].is_string()) continue;
+            
+            const std::string& id = modelNode["model_id"].get<std::string>();
+            if (id != modelId) continue;
+
+            // 找到匹配的模型，检查是否有 api_provider
+            if (modelNode.contains("api_provider") && modelNode["api_provider"].is_string()) {
+                const std::string provider = modelNode["api_provider"].get<std::string>();
+                
+                // 从 api_providers 中获取配置
+                std::string providerPath = "api_providers." + provider;
+                if (auto providerNode = m_cfg.get(providerPath); providerNode.has_value() && providerNode->is_object()) {
+                    // 获取 base_url
+                    if (auto urlNode = m_cfg.get(providerPath + ".base_url"); urlNode.has_value() && urlNode->is_string()) {
+                        const auto s = trimCopy(urlNode->get<std::string>());
+                        if (!s.empty()) config.baseUrl = s;
+                    }
+                    
+                    // 获取 api_key
+                    if (auto keyNode = m_cfg.get(providerPath + ".api_key"); keyNode.has_value() && keyNode->is_string()) {
+                        const auto s = trimCopy(keyNode->get<std::string>());
+                        if (!s.empty()) config.apiKey = s;
+                    }
+                    
+                    // 获取 timeout
+                    if (auto timeoutNode = m_cfg.get(providerPath + ".default_timeout_ms"); timeoutNode.has_value()) {
+                        int timeout = asIntOr(timeoutNode, config.timeoutMs);
+                        if (timeout > 0) config.timeoutMs = timeout;
+                    }
+                }
+            }
+            // 如果模型没有指定 api_provider，使用默认配置
+            break;
+        }
+    }
+
+    return config;
+}
+
 static void configureHttpClient(HttpClient& client, const std::string& apiKey, int timeoutMs) {
     // 注意：不打印 api_key；仅设置 header
     if (!apiKey.empty()) client.setDefaultHeader("Authorization", "Bearer " + apiKey);
@@ -107,19 +156,22 @@ static void configureHttpClient(HttpClient& client, const std::string& apiKey, i
 }
 
 types::ChatResponse APIClient::chat(const types::ChatRequest& req) {
-    HttpClient client(m_baseUrl);
-    configureHttpClient(client, m_apiKey, m_timeoutMs);
+    // 根据模型ID获取对应的API配置
+    const auto apiConfig = getApiConfigForModel(req.model);
+    
+    HttpClient client(apiConfig.baseUrl);
+    configureHttpClient(client, apiConfig.apiKey, apiConfig.timeoutMs);
 
     const std::string endpoint = "/chat/completions";
 
     HttpRequest hreq;
     hreq.method = HttpMethod::POST;
-    hreq.url = joinUrl(m_baseUrl, endpoint);
+    hreq.url = joinUrl(apiConfig.baseUrl, endpoint);
     hreq.body = req.toJson().dump();
-    hreq.timeoutMs = m_timeoutMs;
+    hreq.timeoutMs = apiConfig.timeoutMs;
     hreq.followRedirects = true;
     // 明确设置 headers，确保 ErrorHandler 上下文可关联请求（且不包含敏感信息）
-    if (!m_apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + m_apiKey;
+    if (!apiConfig.apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + apiConfig.apiKey;
     hreq.headers["Content-Type"] = "application/json";
     hreq.headers["Accept"] = "application/json";
 
@@ -164,16 +216,19 @@ std::future<types::ChatResponse> APIClient::chatAsync(const types::ChatRequest& 
 std::future<types::ChatResponse> APIClient::chatAsync(const types::ChatRequest& req, utils::HttpClient::CancelToken* token) {
     // 使用 HttpClient 的异步方法，支持取消
     return std::async(std::launch::async, [this, req, token]() -> types::ChatResponse {
-        HttpClient client(m_baseUrl);
-        configureHttpClient(client, m_apiKey, m_timeoutMs);
+        // 根据模型ID获取对应的API配置
+        const auto apiConfig = getApiConfigForModel(req.model);
+        
+        HttpClient client(apiConfig.baseUrl);
+        configureHttpClient(client, apiConfig.apiKey, apiConfig.timeoutMs);
 
         const std::string endpoint = "/chat/completions";
-        const std::string url = joinUrl(m_baseUrl, endpoint);
+        const std::string url = joinUrl(apiConfig.baseUrl, endpoint);
         const std::string body = req.toJson().dump();
 
         // 准备请求头
         std::map<std::string, std::string> headers;
-        if (!m_apiKey.empty()) headers["Authorization"] = "Bearer " + m_apiKey;
+        if (!apiConfig.apiKey.empty()) headers["Authorization"] = "Bearer " + apiConfig.apiKey;
         headers["Content-Type"] = "application/json";
         headers["Accept"] = "application/json";
 
@@ -186,7 +241,7 @@ std::future<types::ChatResponse> APIClient::chatAsync(const types::ChatRequest& 
         hreq.method = HttpMethod::POST;
         hreq.url = url;
         hreq.body = body;
-        hreq.timeoutMs = m_timeoutMs;
+        hreq.timeoutMs = apiConfig.timeoutMs;
         hreq.followRedirects = true;
         hreq.headers = headers;
 
@@ -473,20 +528,23 @@ void APIClient::chatStream(const types::ChatRequest& req, Callbacks cb) {
     ChatRequest r = req;
     r.stream = true;
 
-    HttpClient client(m_baseUrl);
-    configureHttpClient(client, m_apiKey, m_timeoutMs);
+    // 根据模型ID获取对应的API配置
+    const auto apiConfig = getApiConfigForModel(req.model);
+    
+    HttpClient client(apiConfig.baseUrl);
+    configureHttpClient(client, apiConfig.apiKey, apiConfig.timeoutMs);
 
     HttpRequest hreq;
     hreq.method = HttpMethod::POST;
     const std::string endpoint = "/chat/completions";
-    hreq.url = joinUrl(m_baseUrl, endpoint);
+    hreq.url = joinUrl(apiConfig.baseUrl, endpoint);
     hreq.body = r.toJson().dump();
-    hreq.timeoutMs = m_timeoutMs;
+    hreq.timeoutMs = apiConfig.timeoutMs;
     hreq.followRedirects = true;
 
     // httplib send() 走 HttpRequest.headers；HttpClient::executeStream 不会 merge 默认头，因此我们显式补齐
     // 但为了保持与同步接口一致（Authorization 等），这里直接在 request.headers 中设置
-    if (!m_apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + m_apiKey;
+    if (!apiConfig.apiKey.empty()) hreq.headers["Authorization"] = "Bearer " + apiConfig.apiKey;
     hreq.headers["Content-Type"] = "application/json";
     hreq.headers["Accept"] = "text/event-stream";
 

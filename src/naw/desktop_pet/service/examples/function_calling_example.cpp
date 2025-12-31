@@ -180,20 +180,43 @@ int main() {
     CodeTools::registerAllTools(toolManager);
     std::cout << "已注册 " << toolManager.getToolCount() << " 个工具\n";
 
-    // 获取模型ID
+    // 获取模型ID - 优先使用代码生成任务的默认模型（GLM-4.7）
     std::string modelId;
-    if (auto m = cfg.get("routing.fallback_model"); m.has_value() && m->is_string()) {
-        modelId = m->get<std::string>();
-    } else if (auto m2 = cfg.get("models"); m2.has_value() && m2->is_array() && !m2->empty() &&
-               (*m2)[0].is_object() && (*m2)[0].contains("model_id") && (*m2)[0]["model_id"].is_string()) {
-        modelId = (*m2)[0]["model_id"].get<std::string>();
-    } else {
-        modelId = "deepseek-ai/DeepSeek-V3";
+    // 1. 优先从路由配置中获取 CodeGeneration 任务的默认模型
+    if (auto routing = cfg.get("routing.default_model_per_task"); routing.has_value() && routing->is_object()) {
+        if (routing->contains("CodeGeneration") && (*routing)["CodeGeneration"].is_string()) {
+            modelId = (*routing)["CodeGeneration"].get<std::string>();
+        }
+    }
+    // 2. 如果没有配置，尝试从 fallback_model 获取
+    if (modelId.empty()) {
+        if (auto m = cfg.get("routing.fallback_model"); m.has_value() && m->is_string()) {
+            modelId = m->get<std::string>();
+        }
+    }
+    // 3. 如果还没有，从 models 数组的第一个模型获取
+    if (modelId.empty()) {
+        if (auto m2 = cfg.get("models"); m2.has_value() && m2->is_array() && !m2->empty() &&
+            (*m2)[0].is_object() && (*m2)[0].contains("model_id") && (*m2)[0]["model_id"].is_string()) {
+            modelId = (*m2)[0]["model_id"].get<std::string>();
+        }
+    }
+    // 4. 最后回退到默认值
+    if (modelId.empty()) {
+        modelId = "glm-4.7";  // 默认使用 GLM-4.7
     }
 
     std::cout << "使用模型: " << modelId << "\n";
     std::cout << "Base URL: " << apiClient.getBaseUrl() << "\n";
-    std::cout << "API Key : " << apiClient.getApiKeyRedacted() << "\n\n";
+    std::cout << "API Key : " << apiClient.getApiKeyRedacted() << "\n";
+    // 注意：如果使用 GLM-4.7，需要确保 APIClient 配置了正确的 API 端点
+    // GLM-4.7 使用 api_providers.zhipu.base_url，而不是 api.base_url
+    if (modelId == "glm-4.7") {
+        if (auto zhipuUrl = cfg.get("api_providers.zhipu.base_url"); zhipuUrl.has_value() && zhipuUrl->is_string()) {
+            std::cout << "GLM-4.7 API URL: " << zhipuUrl->get<std::string>() << "\n";
+        }
+    }
+    std::cout << "\n";
 
     printHelp();
 

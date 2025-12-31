@@ -78,10 +78,20 @@ public:
     int getDefaultTimeoutMs() const { return m_timeoutMs; }
 
 private:
+    // API 配置结构
+    struct ApiConfig {
+        std::string baseUrl;
+        std::string apiKey;
+        int timeoutMs;
+    };
+
+    // 根据模型ID获取对应的API配置
+    ApiConfig getApiConfigForModel(const std::string& modelId) const;
+
     ConfigManager& m_cfg;
-    std::string m_baseUrl;
-    std::string m_apiKey;
-    int m_timeoutMs{30000};
+    std::string m_baseUrl;  // 默认API端点
+    std::string m_apiKey;   // 默认API密钥
+    int m_timeoutMs{30000}; // 默认超时
 };
 
 } // namespace naw::desktop_pet::service

@@ -24,6 +24,7 @@ struct ModelConfig {
     bool supportsStreaming{true};
     std::optional<std::string> recommendedPromptStyle;
     float performanceScore{0.0f};
+    std::optional<std::string> apiProvider;  // 指定使用的 API 提供商（如 "zhipu"）
 
     static std::optional<ModelConfig> fromJson(const nlohmann::json& j) {
         if (!j.is_object()) return std::nullopt;
@@ -104,6 +105,8 @@ struct ModelConfig {
             cfg.recommendedPromptStyle = *v;
         if (auto v = getF32("performance_score", "performanceScore"); v.has_value())
             cfg.performanceScore = *v;
+        if (auto v = getStr("api_provider", "apiProvider"); v.has_value())
+            cfg.apiProvider = *v;
 
         return cfg;
     }
@@ -124,6 +127,8 @@ struct ModelConfig {
         if (recommendedPromptStyle.has_value())
             j["recommended_prompt_style"] = *recommendedPromptStyle;
         j["performance_score"] = performanceScore;
+        if (apiProvider.has_value())
+            j["api_provider"] = *apiProvider;
         return j;
     }
 

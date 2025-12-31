@@ -229,6 +229,15 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
         {"api_key", "${SILICONFLOW_API_KEY}"},
         {"default_timeout_ms", 30000}
     };
+    j["api_providers"] = {
+        {"_comment", "Multiple API providers configuration. Each provider can have its own base_url and api_key."},
+        {"zhipu", {
+            {"_comment", "ZhipuAI GLM API provider for code-related tasks."},
+            {"api_key", "${ZHIPU_API_KEY}"},
+            {"base_url", "https://open.bigmodel.cn/api/coding/paas/v4"},
+            {"default_timeout_ms", 30000}
+        }}
+    };
     j["multimodal"] = {
         {"_comment", "Optional multimodal providers. This node only defines configuration structure; calling logic is implemented in later phases."},
         {"llm_filter",
@@ -283,10 +292,21 @@ nlohmann::json ConfigManager::makeDefaultConfig() {
             {"display_name", "DeepSeek V3"},
             {"supported_tasks", nlohmann::json::array({"CodeGeneration", "CodeAnalysis", "TechnicalQnA"})},
             {"supports_streaming", true}
+        },
+        {
+            {"model_id", "glm-4.7"},
+            {"display_name", "GLM-4.7 (代码专用)"},
+            {"supported_tasks", nlohmann::json::array({"CodeGeneration", "CodeAnalysis", "TechnicalQnA"})},
+            {"supports_streaming", true},
+            {"api_provider", "zhipu"}
         }
     });
     j["routing"] = {
-        {"default_model_per_task", {{"CodeGeneration", "deepseek-ai/DeepSeek-V3"}}},
+        {"default_model_per_task", {
+            {"CodeGeneration", "glm-4.7"},
+            {"CodeAnalysis", "glm-4.7"},
+            {"TechnicalQnA", "glm-4.7"}
+        }},
         {"fallback_model", "deepseek-ai/DeepSeek-V3"}
     };
     j["tools"] = {
@@ -383,6 +403,10 @@ void ConfigManager::applyEnvMappingOverrides(nlohmann::json& root) {
         {"SILICONFLOW_DEFAULT_TIMEOUT_MS", "api.default_timeout_ms"},
         {"SILICONFLOW_FALLBACK_MODEL", "routing.fallback_model"},
         {"SILICONFLOW_DEFAULT_MODEL_CODEGEN", "routing.default_model_per_task.CodeGeneration"},
+        // ZhipuAI GLM API provider
+        {"ZHIPU_API_KEY", "api_providers.zhipu.api_key"},
+        {"ZHIPU_BASE_URL", "api_providers.zhipu.base_url"},
+        {"ZHIPU_DEFAULT_TIMEOUT_MS", "api_providers.zhipu.default_timeout_ms"},
     };
 
     for (const auto& m : mapping) {
