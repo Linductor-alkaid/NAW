@@ -11,7 +11,6 @@
 // 前向声明
 namespace naw::desktop_pet::service {
     class APIClient;
-    class ContextRefiner;
 }
 
 #include <chrono>
@@ -319,9 +318,6 @@ private:
 
     // 工具管理器（可选，用于Function Calling）
     ToolManager* m_toolManager{nullptr};
-
-    // 上下文提纯器（可选）
-    std::unique_ptr<ContextRefiner> m_contextRefiner;
 
     // 内部方法
     /**

@@ -1,6 +1,5 @@
 #include "naw/desktop_pet/service/FunctionCallingHandler.h"
 
-#include "naw/desktop_pet/service/ContextRefiner.h"
 #include "naw/desktop_pet/service/ErrorHandler.h"
 #include "naw/desktop_pet/service/ToolCallContext.h"
 
@@ -485,7 +484,6 @@ std::vector<FunctionCallResult> FunctionCallingHandler::executeToolCallsConcurre
 
 std::vector<types::ChatMessage> FunctionCallingHandler::buildToolResultMessages(
     const std::vector<FunctionCallResult>& results,
-    ContextRefiner* contextRefiner,
     const std::optional<std::string>& userQuery
 ) {
     std::vector<types::ChatMessage> messages;
@@ -524,16 +522,8 @@ std::vector<types::ChatMessage> FunctionCallingHandler::buildToolResultMessages(
                 resultText = "Error: Failed to serialize tool result";
             }
 
-            // 如果启用了上下文提纯且结果文本过长，应用提纯
-            if (contextRefiner && contextRefiner->isEnabled() && !resultText.empty()) {
-                ErrorInfo refineError;
-                std::string refined = contextRefiner->refineContext(resultText, userQuery, &refineError);
-                if (refineError.message.empty()) {
-                    // 提纯成功
-                    resultText = refined;
-                }
-                // 如果提纯失败，使用原始文本（错误已记录）
-            }
+            // ContextRefiner 已移除，不再进行上下文提纯
+            (void)userQuery;
 
             message.setText(resultText);
         } else {
@@ -594,7 +584,6 @@ std::optional<types::ChatRequest> FunctionCallingHandler::processToolCalls(
     ToolManager& toolManager,
     ErrorInfo* error,
     ToolCallContext* context,
-    ContextRefiner* contextRefiner,
     const std::optional<std::string>& userQuery
 ) {
     // 检查是否有工具调用
@@ -641,8 +630,8 @@ std::optional<types::ChatRequest> FunctionCallingHandler::processToolCalls(
         }
     }
 
-    // 构建工具结果消息（传递 ContextRefiner 以自动优化过长的工具输出）
-    auto toolResultMessages = buildToolResultMessages(results, contextRefiner, finalUserQuery);
+    // 构建工具结果消息（ContextRefiner 已移除）
+    auto toolResultMessages = buildToolResultMessages(results, finalUserQuery);
 
     // 构建后续请求
     auto followUpRequest = buildFollowUpRequest(

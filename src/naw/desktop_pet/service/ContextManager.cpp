@@ -1,6 +1,5 @@
 #include "naw/desktop_pet/service/ContextManager.h"
 
-#include "naw/desktop_pet/service/ContextRefiner.h"
 #include "naw/desktop_pet/service/ErrorHandler.h"
 #include "naw/desktop_pet/service/ProjectContextCollector.h"
 #include "naw/desktop_pet/service/ToolManager.h"
@@ -110,10 +109,8 @@ ContextManager::ContextManager(ConfigManager& configManager, APIClient* apiClien
     // 加载默认配置
     loadConfigFromFile();
     
-    // 如果提供了 APIClient，创建 ContextRefiner
-    if (apiClient != nullptr) {
-        m_contextRefiner = std::make_unique<ContextRefiner>(m_configManager, *apiClient);
-    }
+    // ContextRefiner 已移除，不再创建
+    (void)apiClient; // 保留参数以保持接口兼容性
 }
 
 ContextManager::~ContextManager() = default;
@@ -230,16 +227,7 @@ types::ChatMessage ContextManager::buildCodeContext(const CodeContext& codeConte
 
     std::string contextText = oss.str();
     
-    // 如果启用了上下文提纯，应用提纯
-    if (m_contextRefiner && m_contextRefiner->isEnabled()) {
-        ErrorInfo refineError;
-        std::string refined = m_contextRefiner->refineContext(contextText, std::nullopt, &refineError);
-        if (refineError.message.empty()) {
-            // 提纯成功
-            contextText = refined;
-        }
-        // 如果提纯失败，使用原始文本（错误已记录）
-    }
+    // ContextRefiner 已移除，不再进行上下文提纯
 
     msg.setText(contextText);
     return msg;
@@ -261,16 +249,7 @@ types::ChatMessage ContextManager::buildMemoryContext(
 
     std::string contextText = oss.str();
     
-    // 如果启用了上下文提纯，应用提纯
-    if (m_contextRefiner && m_contextRefiner->isEnabled()) {
-        ErrorInfo refineError;
-        std::string refined = m_contextRefiner->refineContext(contextText, std::nullopt, &refineError);
-        if (refineError.message.empty()) {
-            // 提纯成功
-            contextText = refined;
-        }
-        // 如果提纯失败，使用原始文本（错误已记录）
-    }
+    // ContextRefiner 已移除，不再进行上下文提纯
 
     msg.setText(contextText);
     return msg;

@@ -11,7 +11,6 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ModelManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/TaskRouter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ContextManager.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/ContextRefiner.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/RequestManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/CacheManager.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ResponseHandler.cpp
@@ -41,7 +40,6 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ModelManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/TaskRouter.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ContextManager.h
-    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ContextRefiner.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/RequestManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/CacheManager.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ResponseHandler.h
@@ -334,16 +332,6 @@ if(BUILD_TESTING)
     target_include_directories(ProjectContextCollectorTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME ProjectContextCollectorTest COMMAND ProjectContextCollectorTest)
 
-    add_executable(ContextRefinerTest
-        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ContextRefinerTest.cpp
-    )
-    if(MSVC)
-        target_compile_options(ContextRefinerTest PRIVATE /GL-)
-        target_link_options(ContextRefinerTest PRIVATE /LTCG:OFF /INCREMENTAL)
-    endif()
-    target_link_libraries(ContextRefinerTest PRIVATE NAW_ServiceFoundation NAW_ServiceAPIClient NAW_ServiceUtils)
-    target_include_directories(ContextRefinerTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
-    add_test(NAME ContextRefinerTest COMMAND ContextRefinerTest)
 endif()
 
 if(BUILD_APICLIENT_CHAT_EXAMPLE)

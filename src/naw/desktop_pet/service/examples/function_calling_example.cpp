@@ -3,7 +3,6 @@
 #include "naw/desktop_pet/service/ToolManager.h"
 #include "naw/desktop_pet/service/CodeTools.h"
 #include "naw/desktop_pet/service/FunctionCallingHandler.h"
-#include "naw/desktop_pet/service/ContextRefiner.h"
 #include "naw/desktop_pet/service/types/RequestResponse.h"
 
 #include <iostream>
@@ -176,11 +175,7 @@ int main() {
     APIClient apiClient(cfg);
     ToolManager toolManager;
     
-    // 初始化上下文提纯器（用于自动优化过长的工具输出）
-    ContextRefiner contextRefiner(cfg, apiClient);
-    if (contextRefiner.isEnabled()) {
-        std::cout << "上下文提纯已启用（将自动优化过长的工具输出）\n";
-    }
+    // ContextRefiner 已移除
 
     // 3. 注册代码工具
     std::cout << "正在注册代码工具...\n";
@@ -448,8 +443,7 @@ int main() {
                             }
                         }
 
-                        // 构建工具结果消息（传递 ContextRefiner 以自动优化过长的工具输出）
-                        // 使用用户原始查询作为上下文，帮助提纯器更好地筛选相关信息
+                        // 构建工具结果消息（ContextRefiner 已移除）
                         std::optional<std::string> userQuery;
                         if (!history.empty() && history.back().role == MessageRole::User) {
                             if (auto tv = history.back().textView(); tv.has_value()) {
@@ -457,41 +451,10 @@ int main() {
                             }
                         }
                         
-                        // 记录原始结果长度，用于检测是否进行了提纯
-                        std::vector<size_t> originalSizes;
-                        if (contextRefiner.isEnabled()) {
-                            for (const auto& result : results) {
-                                if (result.success && result.result.has_value()) {
-                                    try {
-                                        std::string originalText = result.result.value().dump();
-                                        originalSizes.push_back(originalText.size());
-                                    } catch (...) {
-                                        originalSizes.push_back(0);
-                                    }
-                                } else {
-                                    originalSizes.push_back(0);
-                                }
-                            }
-                        }
-                        
                         auto toolResultMessages = FunctionCallingHandler::buildToolResultMessages(
                             results, 
-                            &contextRefiner, 
                             userQuery
-                        );
-                        
-                        // 检测并报告上下文提纯
-                        if (contextRefiner.isEnabled() && !originalSizes.empty()) {
-                            for (size_t i = 0; i < toolResultMessages.size() && i < originalSizes.size(); ++i) {
-                                const auto& msg = toolResultMessages[i];
-                                if (msg.role == MessageRole::Tool && msg.name == results[i].toolName) {
-                                    if (auto tv = msg.textView(); tv.has_value()) {
-                                        size_t refinedSize = tv->size();
-                                        size_t originalSize = originalSizes[i];
-                                        if (originalSize > 0 && refinedSize < originalSize) {
-                                            size_t reduction = originalSize - refinedSize;
-                                            double reductionPercent = (100.0 * reduction) / originalSize;
-                                            std::cout << "\n[上下文提纯] 工具 \"" << results[i].toolName 
+                        ); 
                                                       << "\" 的输出已优化: " << originalSize << " 字符 -> " 
                                                       << refinedSize << " 字符 (减少 " << reductionPercent 
                                                       << "%, " << reduction << " 字符)\n";
