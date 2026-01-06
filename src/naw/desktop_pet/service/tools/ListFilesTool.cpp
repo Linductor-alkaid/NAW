@@ -30,15 +30,16 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
             recursive = arguments["recursive"].get<bool>();
         }
         
-        fs::path dirPath(directory);
+        // 从 UTF-8 字符串构造路径（Windows 上正确处理编码）
+        fs::path dirPath = pathFromUtf8String(directory);
         
         // 检查目录是否存在
         if (!fs::exists(dirPath)) {
-            return nlohmann::json{{"error", "目录不存在: " + directory}};
+            return nlohmann::json{{"error", "目录不存在: " + sanitizeUtf8String(directory)}};
         }
         
         if (!fs::is_directory(dirPath)) {
-            return nlohmann::json{{"error", "路径不是目录: " + directory}};
+            return nlohmann::json{{"error", "路径不是目录: " + sanitizeUtf8String(directory)}};
         }
         
         // 收集文件和目录
@@ -46,29 +47,31 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
         std::vector<std::string> directories;
         uintmax_t totalSize = 0;
         
-        // 辅助函数：获取路径表示
+        // 辅助函数：获取路径表示（返回UTF-8编码的字符串）
         // 非递归模式：只返回文件名
         // 递归模式：返回相对于 dirPath 的相对路径（清理 ".\" 前缀）
         auto getPathString = [&dirPath, recursive](const fs::path& entryPath) -> std::string {
             if (!recursive) {
-                // 非递归模式：只返回文件名
-                return entryPath.filename().string();
+                // 非递归模式：只返回文件名（转换为UTF-8）
+                std::string filename = pathToUtf8String(entryPath.filename());
+                return sanitizeUtf8String(filename);
             } else {
-                // 递归模式：返回相对路径
+                // 递归模式：返回相对路径（转换为UTF-8）
                 try {
                     fs::path relative = fs::relative(entryPath, dirPath);
                     if (!relative.empty() && relative != entryPath) {
-                        std::string relStr = relative.string();
+                        std::string relStr = pathToUtf8String(relative);
                         // 移除开头的 ".\" 或 "./"
                         if (relStr.size() >= 2 && relStr[0] == '.' && (relStr[1] == '\\' || relStr[1] == '/')) {
-                            return relStr.substr(2);
+                            return sanitizeUtf8String(relStr.substr(2));
                         }
-                        return relStr;
+                        return sanitizeUtf8String(relStr);
                     }
                 } catch (...) {
                     // 如果获取相对路径失败，使用文件名
                 }
-                return entryPath.filename().string();
+                std::string filename = pathToUtf8String(entryPath.filename());
+                return sanitizeUtf8String(filename);
             }
         };
         
@@ -85,7 +88,8 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
                         }
                         
                         if (fs::is_regular_file(entry)) {
-                            std::string filename = entry.path().filename().string();
+                            // 使用UTF-8编码的文件名进行模式匹配
+                            std::string filename = pathToUtf8String(entry.path().filename());
                             if (pattern.empty() || matchesPattern(filename, pattern)) {
                                 files.push_back(getPathString(entry.path()));
                                 totalSize += fs::file_size(entry);
@@ -106,7 +110,8 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
                 for (const auto& entry : fs::directory_iterator(dirPath)) {
                     try {
                         if (fs::is_regular_file(entry)) {
-                            std::string filename = entry.path().filename().string();
+                            // 使用UTF-8编码的文件名进行模式匹配
+                            std::string filename = pathToUtf8String(entry.path().filename());
                             if (pattern.empty() || matchesPattern(filename, pattern)) {
                                 files.push_back(getPathString(entry.path()));
                                 totalSize += fs::file_size(entry);
@@ -121,19 +126,21 @@ static nlohmann::json handleListFiles(const nlohmann::json& arguments) {
                 }
             }
         } catch (const fs::filesystem_error& e) {
-            return nlohmann::json{{"error", std::string("遍历目录失败: ") + e.what()}};
+            std::string errorMsg = std::string("遍历目录失败: ") + e.what();
+            return nlohmann::json{{"error", sanitizeUtf8String(errorMsg)}};
         }
         
         nlohmann::json result;
-        result["files"] = files;
-        result["directories"] = directories;
+        result["files"] = files;  // 文件路径已经过 sanitizeUtf8String 处理
+        result["directories"] = directories;  // 目录路径已经过 sanitizeUtf8String 处理
         result["count"] = files.size();
         result["total_size"] = totalSize;
         
         return result;
         
     } catch (const std::exception& e) {
-        return nlohmann::json{{"error", std::string("列出文件失败: ") + e.what()}};
+        std::string errorMsg = std::string("列出文件失败: ") + e.what();
+        return nlohmann::json{{"error", sanitizeUtf8String(errorMsg)}};
     } catch (...) {
         return nlohmann::json{{"error", "列出文件时发生未知错误"}};
     }

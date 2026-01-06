@@ -29,6 +29,14 @@ enum class FileEncoding {
 std::string pathToUtf8String(const fs::path& path);
 
 /**
+ * @brief 从 UTF-8 编码的字符串构造文件路径
+ * 在 Windows 上正确处理 UTF-8 字符串，避免编码问题
+ * @param utf8Path UTF-8 编码的路径字符串
+ * @return 文件路径对象
+ */
+fs::path pathFromUtf8String(const std::string& utf8Path);
+
+/**
  * @brief 检查文件大小是否超过限制
  */
 bool isFileTooLarge(const fs::path& path);

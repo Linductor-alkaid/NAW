@@ -529,7 +529,20 @@ void APIClient::chatStream(const types::ChatRequest& req, Callbacks cb) {
     r.stream = true;
 
     // 根据模型ID获取对应的API配置
-    const auto apiConfig = getApiConfigForModel(req.model);
+    auto apiConfig = getApiConfigForModel(req.model);
+    
+    // 如果请求包含工具，增加超时时间
+    // 工具调用参数可能很大（如write_file包含完整文件内容），流式输出需要更长时间
+    if (!req.tools.empty()) {
+        // 工具调用请求需要更长的超时时间，特别是流式输出工具调用参数时
+        // 默认超时时间 * 3，但不超过10分钟
+        int extendedTimeout = apiConfig.timeoutMs * 3;
+        int maxTimeout = 10 * 60 * 1000; // 10分钟
+        if (extendedTimeout > maxTimeout) {
+            extendedTimeout = maxTimeout;
+        }
+        apiConfig.timeoutMs = extendedTimeout;
+    }
     
     HttpClient client(apiConfig.baseUrl);
     configureHttpClient(client, apiConfig.apiKey, apiConfig.timeoutMs);

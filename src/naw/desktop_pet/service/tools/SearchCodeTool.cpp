@@ -323,7 +323,8 @@ static std::vector<fs::path> collectFiles(
                     continue;
                 }
                 
-                std::string filename = entry.path().filename().string();
+                // 使用UTF-8编码的文件名进行模式匹配
+                std::string filename = pathToUtf8String(entry.path().filename());
                 
                 if (!filePattern.empty() && !matchesPattern(filename, filePattern)) {
                     continue;
@@ -472,7 +473,8 @@ static nlohmann::json handleSearchCode(const nlohmann::json& arguments) {
             caseSensitive = arguments["case_sensitive"].get<bool>();
         }
         
-        fs::path dirPath(directory);
+        // 从 UTF-8 字符串构造路径（Windows 上正确处理编码）
+        fs::path dirPath = pathFromUtf8String(directory);
         
         // 检查目录是否存在
         if (!fs::exists(dirPath) || !fs::is_directory(dirPath)) {

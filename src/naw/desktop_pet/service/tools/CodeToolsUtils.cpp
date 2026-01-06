@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -50,6 +51,31 @@ std::string pathToUtf8String(const fs::path& path) {
         // 如果 u8string() 失败，回退到 string()（可能不是 UTF-8，但至少能工作）
         return path.string();
     }
+}
+
+fs::path pathFromUtf8String(const std::string& utf8Path) {
+#if defined(_WIN32)
+    // Windows: 需要将 UTF-8 字符串转换为宽字符串，然后构造路径
+    try {
+        int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), static_cast<int>(utf8Path.size()), nullptr, 0);
+        if (wlen <= 0) {
+            // 转换失败，回退到直接构造（可能不是UTF-8，但至少能工作）
+            return fs::path(utf8Path);
+        }
+        
+        std::vector<wchar_t> wstr(static_cast<size_t>(wlen));
+        MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(), static_cast<int>(utf8Path.size()), wstr.data(), wlen);
+        
+        // 从宽字符串构造路径
+        return fs::path(std::wstring(wstr.data(), wstr.size()));
+    } catch (...) {
+        // 异常时回退到直接构造
+        return fs::path(utf8Path);
+    }
+#else
+    // 非 Windows 平台：直接使用 UTF-8 字符串构造路径
+    return fs::path(utf8Path);
+#endif
 }
 
 bool isFileTooLarge(const fs::path& path) {
@@ -98,16 +124,43 @@ bool matchesPattern(const std::string& filename, const std::string& pattern) {
 
 std::vector<std::string> readFileLines(const fs::path& path, int startLine, int endLine) {
     std::vector<std::string> lines;
-    std::ifstream file(path, std::ios::in);
+    
+    // 以二进制模式读取文件，以便检测编码
+    std::ifstream file(path, std::ios::in | std::ios::binary);
     
     if (!file.is_open()) {
-        throw std::runtime_error("无法打开文件: " + path.string());
+        // 使用UTF-8路径字符串避免编码问题
+        std::string utf8Path = pathToUtf8String(path);
+        throw std::runtime_error("无法打开文件: " + utf8Path);
     }
 
+    // 读取文件内容到字节数组
+    file.seekg(0, std::ios::end);
+    size_t fileSize = static_cast<size_t>(file.tellg());
+    file.seekg(0, std::ios::beg);
+    
+    std::vector<unsigned char> content(fileSize);
+    file.read(reinterpret_cast<char*>(content.data()), fileSize);
+    file.close();
+    
+    // 检测文件编码
+    FileEncoding encoding = detectFileEncoding(content);
+    
+    // 转换为UTF-8
+    std::optional<std::string> utf8Content = convertToUtf8(content, encoding);
+    if (!utf8Content.has_value()) {
+        // 如果转换失败，尝试直接使用原始内容（可能是UTF-8）
+        std::string rawContent(content.begin(), content.end());
+        // 清理无效UTF-8字符
+        utf8Content = sanitizeUtf8String(rawContent);
+    }
+    
+    // 按行分割
+    std::istringstream contentStream(utf8Content.value());
     std::string line;
     int currentLine = 0;
     
-    while (std::getline(file, line)) {
+    while (std::getline(contentStream, line)) {
         currentLine++;
         if (startLine > 0 && currentLine < startLine) {
             continue;

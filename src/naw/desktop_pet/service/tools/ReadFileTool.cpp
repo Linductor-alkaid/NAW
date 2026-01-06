@@ -22,15 +22,18 @@ static nlohmann::json handleReadFile(const nlohmann::json& arguments) {
         }
         
         std::string pathStr = arguments["path"].get<std::string>();
-        fs::path filePath(pathStr);
+        // 从 UTF-8 字符串构造路径（Windows 上正确处理编码）
+        fs::path filePath = pathFromUtf8String(pathStr);
         
         // 检查文件是否存在
         if (!fs::exists(filePath)) {
-            return nlohmann::json{{"error", "文件不存在: " + pathStr}};
+            // 使用原始路径字符串（已经是UTF-8）
+            return nlohmann::json{{"error", "文件不存在: " + sanitizeUtf8String(pathStr)}};
         }
         
         if (!fs::is_regular_file(filePath)) {
-            return nlohmann::json{{"error", "路径不是文件: " + pathStr}};
+            // 使用原始路径字符串（已经是UTF-8）
+            return nlohmann::json{{"error", "路径不是文件: " + sanitizeUtf8String(pathStr)}};
         }
         
         // 检查文件大小
@@ -75,7 +78,8 @@ static nlohmann::json handleReadFile(const nlohmann::json& arguments) {
         
         nlohmann::json result;
         result["content"] = content.str();
-        result["path"] = pathStr;
+        // 使用原始路径字符串（已经是UTF-8），并清理无效UTF-8字符，确保JSON序列化成功
+        result["path"] = sanitizeUtf8String(pathStr);
         result["line_count"] = totalLines;
         
         if (startLine > 0) {
@@ -88,7 +92,9 @@ static nlohmann::json handleReadFile(const nlohmann::json& arguments) {
         return result;
         
     } catch (const std::exception& e) {
-        return nlohmann::json{{"error", std::string("读取文件失败: ") + e.what()}};
+        // 清理错误消息中的无效UTF-8字符
+        std::string errorMsg = std::string("读取文件失败: ") + e.what();
+        return nlohmann::json{{"error", sanitizeUtf8String(errorMsg)}};
     } catch (...) {
         return nlohmann::json{{"error", "读取文件时发生未知错误"}};
     }

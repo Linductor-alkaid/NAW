@@ -26,7 +26,8 @@ static nlohmann::json handleWriteFile(const nlohmann::json& arguments) {
         
         std::string pathStr = arguments["path"].get<std::string>();
         std::string content = arguments["content"].get<std::string>();
-        fs::path filePath(pathStr);
+        // 从 UTF-8 字符串构造路径（Windows 上正确处理编码）
+        fs::path filePath = pathFromUtf8String(pathStr);
         
         // 提取可选参数
         std::string mode = "overwrite";
@@ -60,7 +61,7 @@ static nlohmann::json handleWriteFile(const nlohmann::json& arguments) {
         if (startLine > 0 && endLine > 0) {
             // 行范围替换模式
             if (!fs::exists(filePath)) {
-                return nlohmann::json{{"error", "文件不存在，无法进行行范围替换"}};
+                return nlohmann::json{{"error", "文件不存在，无法进行行范围替换: " + sanitizeUtf8String(pathStr)}};
             }
             
             // 读取原文件
@@ -95,10 +96,10 @@ static nlohmann::json handleWriteFile(const nlohmann::json& arguments) {
                 }
             }
             
-            // 写入文件
-            std::ofstream file(filePath, std::ios::out | std::ios::trunc);
+            // 写入文件（使用UTF-8模式）
+            std::ofstream file(filePath, std::ios::out | std::ios::trunc | std::ios::binary);
             if (!file.is_open()) {
-                return nlohmann::json{{"error", "无法打开文件进行写入: " + pathStr}};
+                return nlohmann::json{{"error", "无法打开文件进行写入: " + sanitizeUtf8String(pathStr)}};
             }
             
             size_t bytesWritten = 0;
@@ -114,20 +115,20 @@ static nlohmann::json handleWriteFile(const nlohmann::json& arguments) {
             
             nlohmann::json result;
             result["success"] = true;
-            result["path"] = pathStr;
+            result["path"] = sanitizeUtf8String(pathStr);  // 使用原始路径字符串（已经是UTF-8）
             result["bytes_written"] = bytesWritten;
             result["mode"] = "line_replace";
             result["message"] = "成功替换行范围 " + std::to_string(startLine) + "-" + std::to_string(endLine);
             return result;
         }
         
-        // 普通写入模式
-        std::ios_base::openmode openMode = std::ios::out;
+        // 普通写入模式（使用二进制模式确保UTF-8内容正确写入）
+        std::ios_base::openmode openMode = std::ios::out | std::ios::binary;
         if (mode == "append") {
             openMode |= std::ios::app;
         } else if (mode == "create_only") {
             if (fs::exists(filePath)) {
-                return nlohmann::json{{"error", "文件已存在，无法使用 create_only 模式"}};
+                return nlohmann::json{{"error", "文件已存在，无法使用 create_only 模式: " + sanitizeUtf8String(pathStr)}};
             }
             openMode |= std::ios::trunc;
         } else {
@@ -137,23 +138,26 @@ static nlohmann::json handleWriteFile(const nlohmann::json& arguments) {
         
         std::ofstream file(filePath, openMode);
         if (!file.is_open()) {
-            return nlohmann::json{{"error", "无法打开文件进行写入: " + pathStr}};
+            return nlohmann::json{{"error", "无法打开文件进行写入: " + sanitizeUtf8String(pathStr)}};
         }
         
-        file << content;
+        // 直接写入UTF-8内容（二进制模式）
+        file.write(content.data(), content.size());
         size_t bytesWritten = content.size();
         file.close();
         
         nlohmann::json result;
         result["success"] = true;
-        result["path"] = pathStr;
+        result["path"] = sanitizeUtf8String(pathStr);  // 使用原始路径字符串（已经是UTF-8）
         result["bytes_written"] = bytesWritten;
         result["mode"] = mode;
         result["message"] = "文件写入成功";
         return result;
         
     } catch (const std::exception& e) {
-        return nlohmann::json{{"error", std::string("写入文件失败: ") + e.what()}};
+        // 清理错误消息中的无效UTF-8字符
+        std::string errorMsg = std::string("写入文件失败: ") + e.what();
+        return nlohmann::json{{"error", sanitizeUtf8String(errorMsg)}};
     } catch (...) {
         return nlohmann::json{{"error", "写入文件时发生未知错误"}};
     }
