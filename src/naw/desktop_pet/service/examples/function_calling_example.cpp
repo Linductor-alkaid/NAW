@@ -454,15 +454,7 @@ int main() {
                         auto toolResultMessages = FunctionCallingHandler::buildToolResultMessages(
                             results, 
                             userQuery
-                        ); 
-                                                      << "\" 的输出已优化: " << originalSize << " 字符 -> " 
-                                                      << refinedSize << " 字符 (减少 " << reductionPercent 
-                                                      << "%, " << reduction << " 字符)\n";
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        );
 
                         // 构建后续请求
                         auto followUpRequest = FunctionCallingHandler::buildFollowUpRequest(
