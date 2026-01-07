@@ -30,6 +30,7 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/FunctionCallingHandler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolCallContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectContextCollector.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/SpeechService.cpp
 )
 
 set(SERVICE_FOUNDATION_HEADERS
@@ -53,6 +54,7 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/FunctionCallingHandler.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolCallContext.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ProjectContextCollector.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/SpeechService.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -81,6 +83,7 @@ target_compile_options(NAW_ServiceFoundation
 target_link_libraries(NAW_ServiceFoundation
     PUBLIC
         NAW_ServiceAPIClient
+        NAW_ServiceUtils
 )
 
 set_target_properties(NAW_ServiceFoundation PROPERTIES
@@ -331,6 +334,17 @@ if(BUILD_TESTING)
     target_link_libraries(ProjectContextCollectorTest PRIVATE NAW_ServiceFoundation)
     target_include_directories(ProjectContextCollectorTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME ProjectContextCollectorTest COMMAND ProjectContextCollectorTest)
+
+    add_executable(SpeechServiceTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/SpeechServiceTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(SpeechServiceTest PRIVATE /GL-)
+        target_link_options(SpeechServiceTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(SpeechServiceTest PRIVATE NAW_ServiceFoundation NAW_ServiceUtils)
+    target_include_directories(SpeechServiceTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    add_test(NAME SpeechServiceTest COMMAND SpeechServiceTest)
 
 endif()
 
