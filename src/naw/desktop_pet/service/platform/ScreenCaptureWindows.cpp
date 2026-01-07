@@ -25,31 +25,13 @@ ScreenCaptureWindows::~ScreenCaptureWindows() {
 // ========== 公共接口实现 ==========
 
 std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreen(int32_t displayId) {
-    // 优先级顺序:Windows.Graphics.Capture > DXGI > BitBlt
-    // Windows.Graphics.Capture 支持多程序同时捕获,避免独占问题
+    // 优先级顺序: DXGI > Windows.Graphics.Capture > BitBlt
+    // DXGI 性能最好，但如果被占用则回退到 Graphics.Capture（支持多程序同时捕获）
     
-    std::string graphicsCaptureError;
     std::string dxgiError;
+    std::string graphicsCaptureError;
     
-    // 1. 优先尝试 Windows.Graphics.Capture (Windows 10 1803+)
-    if (graphicsCaptureAvailable_ || (!graphicsCaptureInitialized_ && initializeGraphicsCapture())) {
-        auto result = captureFullScreenGraphicsCapture(displayId);
-        if (result.has_value()) {
-            graphicsCaptureAvailable_ = true;
-            return result;
-        }
-        // 保存错误信息
-        graphicsCaptureError = getLastError();
-        // 如果初始化成功但捕获失败，标记为不可用
-        if (graphicsCaptureInitialized_) {
-            graphicsCaptureAvailable_ = false;
-        }
-    } else {
-        // 初始化失败，保存错误信息
-        graphicsCaptureError = getLastError();
-    }
-    
-    // 2. 回退到 DXGI(如果可用)
+    // 1. 优先尝试 DXGI (性能最好，硬件加速)
     if (dxgiAvailable_ || (!dxgiInitialized_ && initializeDXGI())) {
         auto result = captureDisplayDXGI(displayId);
         if (result.has_value()) {
@@ -66,14 +48,36 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreen(int32_t 
         dxgiError = getLastError();
     }
     
+    // 2. 回退到 Windows.Graphics.Capture (如果 DXGI 被占用或不可用)
+    if (graphicsCaptureAvailable_ || (!graphicsCaptureInitialized_ && initializeGraphicsCapture())) {
+        auto result = captureFullScreenGraphicsCapture(displayId);
+        if (result.has_value()) {
+            graphicsCaptureAvailable_ = true;
+            // 如果 DXGI 尝试过但失败了，保存其错误信息以便调试
+            if (!dxgiError.empty()) {
+                setLastError("DXGI failed: " + dxgiError + " (fallback to GraphicsCapture succeeded)");
+            }
+            return result;
+        }
+        // 保存错误信息
+        graphicsCaptureError = getLastError();
+        // 如果初始化成功但捕获失败，标记为不可用
+        if (graphicsCaptureInitialized_) {
+            graphicsCaptureAvailable_ = false;
+        }
+    } else {
+        // 初始化失败，保存错误信息
+        graphicsCaptureError = getLastError();
+    }
+    
     // 3. 最后回退到 BitBlt
     // 设置综合错误信息
-    if (!graphicsCaptureError.empty() && !dxgiError.empty()) {
-        setLastError("GraphicsCapture: " + graphicsCaptureError + "; DXGI: " + dxgiError);
-    } else if (!graphicsCaptureError.empty()) {
-        setLastError("GraphicsCapture: " + graphicsCaptureError);
+    if (!dxgiError.empty() && !graphicsCaptureError.empty()) {
+        setLastError("DXGI: " + dxgiError + "; GraphicsCapture: " + graphicsCaptureError);
     } else if (!dxgiError.empty()) {
         setLastError("DXGI: " + dxgiError);
+    } else if (!graphicsCaptureError.empty()) {
+        setLastError("GraphicsCapture: " + graphicsCaptureError);
     }
     
     return captureFullScreenBitBlt(displayId);
@@ -114,8 +118,8 @@ std::vector<types::DisplayInfo> ScreenCaptureWindows::getDisplays() {
 
 // ========== DXGI实现 ==========
 
-bool ScreenCaptureWindows::initializeDXGI() {
-    if (dxgiInitialized_) {
+bool ScreenCaptureWindows::initializeDXGI(int32_t displayId) {
+    if (dxgiInitialized_ && currentDisplayId_ == displayId) {
         return true;
     }
     
@@ -164,12 +168,52 @@ bool ScreenCaptureWindows::initializeDXGI() {
         return false;
     }
     
-    // 获取主显示器(displayId = 0)
-    hr = adapter->EnumOutputs(0, &output);
-    if (FAILED(hr)) {
-        setLastError("Failed to enumerate outputs");
+    // 根据 displayId 找到对应的显示器
+    HMONITOR targetMonitor = getMonitorHandle(displayId);
+    if (!targetMonitor) {
+        setLastError("Invalid display ID");
         return false;
     }
+    
+    // 获取目标显示器的设备名称（用于匹配）
+    MONITORINFOEX monitorInfo = {};
+    monitorInfo.cbSize = sizeof(MONITORINFOEX);
+    if (!GetMonitorInfo(targetMonitor, &monitorInfo)) {
+        setLastError("Failed to get monitor info");
+        return false;
+    }
+    
+    // 将 ANSI 设备名称转换为宽字符
+    WCHAR monitorDeviceNameW[32] = {};
+    MultiByteToWideChar(CP_ACP, 0, monitorInfo.szDevice, -1, monitorDeviceNameW, 32);
+    
+    // 枚举所有输出，找到匹配的显示器
+    Microsoft::WRL::ComPtr<IDXGIOutput> foundOutput;
+    UINT outputIndex = 0;
+    bool found = false;
+    
+    while (adapter->EnumOutputs(outputIndex, &output) != DXGI_ERROR_NOT_FOUND) {
+        DXGI_OUTPUT_DESC outputDesc;
+        hr = output->GetDesc(&outputDesc);
+        if (SUCCEEDED(hr)) {
+            // 比较设备名称或 HMONITOR
+            if (outputDesc.Monitor == targetMonitor || 
+                wcscmp(outputDesc.DeviceName, monitorDeviceNameW) == 0) {
+                foundOutput = output;
+                found = true;
+                break;
+            }
+        }
+        output.Reset();
+        outputIndex++;
+    }
+    
+    if (!found || !foundOutput) {
+        setLastError("Failed to find matching DXGI output for display " + std::to_string(displayId));
+        return false;
+    }
+    
+    output = foundOutput;
     
     hr = output.As(&output1);
     if (FAILED(hr)) {
@@ -205,7 +249,7 @@ bool ScreenCaptureWindows::initializeDXGI() {
     outputWidth_ = outputDesc.DesktopCoordinates.right - outputDesc.DesktopCoordinates.left;
     outputHeight_ = outputDesc.DesktopCoordinates.bottom - outputDesc.DesktopCoordinates.top;
     
-    // 创建staging texture用于CPU读取
+    // 创建双缓冲staging texture用于CPU读取
     D3D11_TEXTURE2D_DESC texDesc = {};
     texDesc.Width = outputWidth_;
     texDesc.Height = outputHeight_;
@@ -216,25 +260,66 @@ bool ScreenCaptureWindows::initializeDXGI() {
     texDesc.Usage = D3D11_USAGE_STAGING;
     texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     
-    hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &stagingTexture_);
+    for (int i = 0; i < 2; ++i) {
+        hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &stagingTextures_[i]);
+        if (FAILED(hr)) {
+            setLastError("Failed to create staging texture " + std::to_string(i));
+            // 清理已创建的纹理
+            for (int j = 0; j < i; ++j) {
+                stagingTextures_[j].Reset();
+            }
+            return false;
+        }
+    }
+    
+    // 创建用于存储上一帧的纹理（用于增量更新）
+    texDesc.Usage = D3D11_USAGE_DEFAULT;
+    texDesc.CPUAccessFlags = 0;
+    texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+    hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &previousFrameTexture_);
     if (FAILED(hr)) {
-        setLastError("Failed to create staging texture");
+        setLastError("Failed to create previous frame texture");
+        for (int i = 0; i < 2; ++i) {
+            stagingTextures_[i].Reset();
+        }
+        return false;
+    }
+    
+    // 创建 Query 对象用于同步 GPU 操作
+    D3D11_QUERY_DESC queryDesc = {};
+    queryDesc.Query = D3D11_QUERY_EVENT;
+    hr = d3dDevice_->CreateQuery(&queryDesc, &query_);
+    if (FAILED(hr)) {
+        setLastError("Failed to create query object");
+        for (int i = 0; i < 2; ++i) {
+            stagingTextures_[i].Reset();
+        }
+        previousFrameTexture_.Reset();
         return false;
     }
     
     dxgiInitialized_ = true;
     dxgiAvailable_ = true;
-    currentDisplayId_ = 0;
+    dxgiFirstCapture_ = true;  // 标记首次捕获
+    currentStagingIndex_ = 0;  // 初始化缓冲区索引
+    currentDisplayId_ = displayId;
     return true;
 }
 
 void ScreenCaptureWindows::cleanupDXGI() {
-    stagingTexture_.Reset();
+    std::lock_guard<std::mutex> lock(stagingMutex_);
+    for (int i = 0; i < 2; ++i) {
+        stagingTextures_[i].Reset();
+    }
+    previousFrameTexture_.Reset();
+    query_.Reset();
     outputDuplication_.Reset();
     output1_.Reset();
     d3dContext_.Reset();
     d3dDevice_.Reset();
     dxgiInitialized_ = false;
+    dxgiFirstCapture_ = true;  // 重置首次捕获标志
+    currentStagingIndex_ = 0;
     // 注意:不重置dxgiAvailable_,因为如果被占用,重试也会失败
 }
 
@@ -451,6 +536,11 @@ void ScreenCaptureWindows::cleanupGraphicsCapture() {
     framePool_.Reset();
     captureItem_.Reset();
     graphicsDevice_.Reset();
+    for (int i = 0; i < 2; ++i) {
+        graphicsCaptureStagingTextures_[i].Reset();  // 清理双缓冲 staging texture
+    }
+    currentGraphicsCaptureStagingIndex_ = 0;
+    graphicsCaptureFirstFrameReceived_ = false;  // 重置第一帧标记
     graphicsCaptureInitialized_ = false;
 }
 
@@ -472,14 +562,17 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreenGraphicsC
     Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Capture::IDirect3D11CaptureFrame> frame;
     HRESULT hr = framePool_->TryGetNextFrame(&frame);
     
-    // 如果第一次尝试失败，可能是还没有帧可用，尝试多次等待
-    // Windows.Graphics.Capture 在启动后通常需要 100-200ms 才能产生第一帧
-    const int maxRetries = 5;
-    const int retryDelayMs = 50;
-    
-    for (int retry = 0; (FAILED(hr) || !frame) && retry < maxRetries; ++retry) {
-        Sleep(retryDelayMs);
-        hr = framePool_->TryGetNextFrame(&frame);
+    // 优化：只在第一次捕获时等待，后续捕获如果失败立即返回
+    // 这样可以避免在连续捕获时造成不必要的延迟
+    if ((FAILED(hr) || !frame) && !graphicsCaptureFirstFrameReceived_) {
+        // 第一次捕获，等待帧产生（通常需要 100-200ms）
+        const int maxRetries = 5;
+        const int retryDelayMs = 50;
+        
+        for (int retry = 0; (FAILED(hr) || !frame) && retry < maxRetries; ++retry) {
+            Sleep(retryDelayMs);
+            hr = framePool_->TryGetNextFrame(&frame);
+        }
     }
     
     if (FAILED(hr) || !frame) {
@@ -492,6 +585,9 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreenGraphicsC
         }
         return std::nullopt;
     }
+    
+    // 标记已收到第一帧
+    graphicsCaptureFirstFrameReceived_ = true;
     
     // 获取帧的 Surface
     Microsoft::WRL::ComPtr<ABI::Windows::Graphics::DirectX::Direct3D11::IDirect3DSurface> surface;
@@ -517,8 +613,79 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreenGraphicsC
         return std::nullopt;
     }
     
-    // 转换为 ImageData
-    return textureToImageData(texture.Get(), outputWidth_, outputHeight_);
+    // GraphicsCapture 返回的纹理是 GPU 纹理，不能直接 Map
+    // 需要先复制到 staging texture（CPU 可读）
+    // 优化：使用双缓冲 staging texture
+    D3D11_TEXTURE2D_DESC srcDesc = {};
+    texture->GetDesc(&srcDesc);
+    
+    // 检查是否需要创建或重建 staging texture
+    bool needRecreateStaging = false;
+    for (int i = 0; i < 2; ++i) {
+        if (!graphicsCaptureStagingTextures_[i]) {
+            needRecreateStaging = true;
+            break;
+        }
+        D3D11_TEXTURE2D_DESC stagingDesc = {};
+        graphicsCaptureStagingTextures_[i]->GetDesc(&stagingDesc);
+        if (stagingDesc.Format != srcDesc.Format || 
+            stagingDesc.Width != srcDesc.Width || 
+            stagingDesc.Height != srcDesc.Height) {
+            needRecreateStaging = true;
+            break;
+        }
+    }
+    
+    if (needRecreateStaging) {
+        // 创建或重建双缓冲 staging texture
+        D3D11_TEXTURE2D_DESC texDesc = {};
+        texDesc.Width = srcDesc.Width;
+        texDesc.Height = srcDesc.Height;
+        texDesc.MipLevels = 1;
+        texDesc.ArraySize = 1;
+        texDesc.Format = srcDesc.Format;
+        texDesc.SampleDesc.Count = 1;
+        texDesc.Usage = D3D11_USAGE_STAGING;
+        texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        texDesc.BindFlags = 0;
+        texDesc.MiscFlags = 0;
+        
+        for (int i = 0; i < 2; ++i) {
+            graphicsCaptureStagingTextures_[i].Reset();
+            hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &graphicsCaptureStagingTextures_[i]);
+            if (FAILED(hr)) {
+                setLastError("Failed to create staging texture " + std::to_string(i) + " for GraphicsCapture (HRESULT: 0x" + 
+                            std::to_string(static_cast<unsigned int>(hr)) + ")");
+                // 清理已创建的纹理
+                for (int j = 0; j < i; ++j) {
+                    graphicsCaptureStagingTextures_[j].Reset();
+                }
+                return std::nullopt;
+            }
+        }
+        
+        outputWidth_ = srcDesc.Width;
+        outputHeight_ = srcDesc.Height;
+        currentGraphicsCaptureStagingIndex_ = 0;
+    }
+    
+    // 双缓冲：切换到下一个缓冲区进行写入
+    int writeIndex = 1 - currentGraphicsCaptureStagingIndex_;
+    
+    // 复制 GPU 纹理到 staging texture
+    d3dContext_->CopyResource(graphicsCaptureStagingTextures_[writeIndex].Get(), texture.Get());
+    
+    // 等待GPU完成复制（可选，但建议在读取前等待）
+    // 这里使用Flush确保命令提交，但不阻塞（非阻塞方式）
+    d3dContext_->Flush();
+    
+    // 从写入的缓冲区读取数据
+    auto result = textureToImageData(graphicsCaptureStagingTextures_[writeIndex].Get(), outputWidth_, outputHeight_);
+    
+    // 切换到写入的缓冲区作为下次的当前缓冲区
+    currentGraphicsCaptureStagingIndex_ = writeIndex;
+    
+    return result;
 }
 
 bool ScreenCaptureWindows::isDXGIAvailable() const {
@@ -537,9 +704,8 @@ std::string ScreenCaptureWindows::getCaptureMethod() const {
 
 std::optional<types::ImageData> ScreenCaptureWindows::captureDisplayDXGI(int32_t displayId) {
     if (!dxgiInitialized_ || displayId != currentDisplayId_) {
-        // 需要重新初始化
         cleanupDXGI();
-        if (!initializeDXGI()) {
+        if (!initializeDXGI(displayId)) {
             return std::nullopt;
         }
     }
@@ -548,16 +714,17 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureDisplayDXGI(int32_t
         return std::nullopt;
     }
     
-    // 获取桌面帧
+    // 获取桌面帧 - 首次捕获使用较长超时，后续使用短超时
     Microsoft::WRL::ComPtr<IDXGIResource> desktopResource;
     DXGI_OUTDUPL_FRAME_INFO frameInfo;
     
-    HRESULT hr = outputDuplication_->AcquireNextFrame(0, &frameInfo, &desktopResource);
+    // 优化1: 首次捕获使用2000ms超时，后续使用16ms超时（约60fps）
+    UINT timeout = dxgiFirstCapture_ ? 2000 : 16;
+    HRESULT hr = outputDuplication_->AcquireNextFrame(timeout, &frameInfo, &desktopResource);
     if (FAILED(hr)) {
         if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
-            setLastError("Frame acquisition timeout");
+            setLastError("Frame acquisition timeout - no screen updates");
         } else if (hr == DXGI_ERROR_ACCESS_LOST) {
-            // 访问丢失,需要重新初始化
             cleanupDXGI();
             setLastError("DXGI access lost, reinitialization required");
         } else {
@@ -565,6 +732,18 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureDisplayDXGI(int32_t
                         std::to_string(static_cast<unsigned int>(hr)) + ")");
         }
         return std::nullopt;
+    }
+    
+    // 检查是否有实际内容更新（首次捕获时可能收到空帧）
+    if (dxgiFirstCapture_ && frameInfo.LastPresentTime.QuadPart == 0 && frameInfo.AccumulatedFrames == 0) {
+        outputDuplication_->ReleaseFrame();
+        setLastError("Received empty frame on first capture, try again");
+        return std::nullopt;
+    }
+    
+    // 标记已不是首次捕获
+    if (dxgiFirstCapture_) {
+        dxgiFirstCapture_ = false;
     }
     
     // 获取纹理
@@ -576,14 +755,275 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureDisplayDXGI(int32_t
         return std::nullopt;
     }
     
-    // 复制到staging texture
-    d3dContext_->CopyResource(stagingTexture_.Get(), desktopTexture.Get());
+    // 检查源纹理格式
+    D3D11_TEXTURE2D_DESC desktopTexDesc = {};
+    desktopTexture->GetDesc(&desktopTexDesc);
     
-    // 释放帧
+    // 验证 staging texture 尺寸（需要验证所有缓冲区）
+    bool needRecreateStaging = false;
+    for (int i = 0; i < 2; ++i) {
+        if (!stagingTextures_[i]) {
+            needRecreateStaging = true;
+            break;
+        }
+        D3D11_TEXTURE2D_DESC stagingTexDesc = {};
+        stagingTextures_[i]->GetDesc(&stagingTexDesc);
+        if (stagingTexDesc.Format != desktopTexDesc.Format || 
+            stagingTexDesc.Width != desktopTexDesc.Width || 
+            stagingTexDesc.Height != desktopTexDesc.Height) {
+            needRecreateStaging = true;
+            break;
+        }
+    }
+    
+    if (needRecreateStaging) {
+        // 重新创建所有 staging texture
+        D3D11_TEXTURE2D_DESC texDesc = {};
+        texDesc.Width = desktopTexDesc.Width;
+        texDesc.Height = desktopTexDesc.Height;
+        texDesc.MipLevels = 1;
+        texDesc.ArraySize = 1;
+        texDesc.Format = desktopTexDesc.Format;
+        texDesc.SampleDesc.Count = 1;
+        texDesc.Usage = D3D11_USAGE_STAGING;
+        texDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        
+        for (int i = 0; i < 2; ++i) {
+            stagingTextures_[i].Reset();
+            hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &stagingTextures_[i]);
+            if (FAILED(hr)) {
+                outputDuplication_->ReleaseFrame();
+                setLastError("Failed to recreate staging texture " + std::to_string(i));
+                // 清理已创建的纹理
+                for (int j = 0; j < i; ++j) {
+                    stagingTextures_[j].Reset();
+                }
+                return std::nullopt;
+            }
+        }
+        
+        // 如果 previousFrameTexture 尺寸不匹配，也重新创建
+        if (!previousFrameTexture_) {
+            texDesc.Usage = D3D11_USAGE_DEFAULT;
+            texDesc.CPUAccessFlags = 0;
+            texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+            hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &previousFrameTexture_);
+            if (FAILED(hr)) {
+                outputDuplication_->ReleaseFrame();
+                setLastError("Failed to recreate previous frame texture");
+                return std::nullopt;
+            }
+        } else {
+            D3D11_TEXTURE2D_DESC prevDesc = {};
+            previousFrameTexture_->GetDesc(&prevDesc);
+            if (prevDesc.Width != desktopTexDesc.Width || prevDesc.Height != desktopTexDesc.Height) {
+                previousFrameTexture_.Reset();
+                texDesc.Usage = D3D11_USAGE_DEFAULT;
+                texDesc.CPUAccessFlags = 0;
+                texDesc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+                hr = d3dDevice_->CreateTexture2D(&texDesc, nullptr, &previousFrameTexture_);
+                if (FAILED(hr)) {
+                    outputDuplication_->ReleaseFrame();
+                    setLastError("Failed to recreate previous frame texture");
+                    return std::nullopt;
+                }
+            }
+        }
+        
+        outputWidth_ = desktopTexDesc.Width;
+        outputHeight_ = desktopTexDesc.Height;
+    }
+    
+    // 确保 query 对象存在
+    if (!query_) {
+        D3D11_QUERY_DESC queryDesc = {};
+        queryDesc.Query = D3D11_QUERY_EVENT;
+        hr = d3dDevice_->CreateQuery(&queryDesc, &query_);
+        if (FAILED(hr)) {
+            outputDuplication_->ReleaseFrame();
+            setLastError("Failed to create query object");
+            return std::nullopt;
+        }
+    }
+    
+    // 优化2: 双缓冲机制
+    // 第一次捕获时，读取和写入使用同一缓冲区（还没有上一帧数据）
+    // 后续捕获时，写入到另一个缓冲区，读取当前缓冲区
+    std::lock_guard<std::mutex> lock(stagingMutex_);
+    int writeIndex;
+    if (dxgiFirstCapture_) {
+        // 首次捕获，使用缓冲区0
+        writeIndex = 0;
+    } else {
+        // 后续捕获，使用另一个缓冲区进行写入
+        writeIndex = 1 - currentStagingIndex_;
+    }
+    
+    // 获取脏矩形和移动矩形（用于增量更新）
+    std::vector<types::Rect> dirtyRects;
+    UINT dirtyRectsBufferSize = 0;
+    hr = outputDuplication_->GetFrameDirtyRects(0, nullptr, &dirtyRectsBufferSize);
+    if (SUCCEEDED(hr) && dirtyRectsBufferSize > 0) {
+        // 计算矩形数量（每个RECT为16字节）
+        UINT rectCount = dirtyRectsBufferSize / sizeof(RECT);
+        std::vector<RECT> dirtyRectsRaw(rectCount);
+        hr = outputDuplication_->GetFrameDirtyRects(
+            dirtyRectsBufferSize, 
+            reinterpret_cast<RECT*>(dirtyRectsRaw.data()), 
+            &dirtyRectsBufferSize
+        );
+        
+        if (SUCCEEDED(hr)) {
+            // 转换为 types::Rect
+            dirtyRects.reserve(rectCount);
+            for (const auto& rect : dirtyRectsRaw) {
+                types::Rect r;
+                r.x = rect.left;
+                r.y = rect.top;
+                r.width = rect.right - rect.left;
+                r.height = rect.bottom - rect.top;
+                dirtyRects.push_back(r);
+            }
+        }
+    }
+    
+    // 获取移动矩形
+    UINT moveRectsBufferSize = 0;
+    hr = outputDuplication_->GetFrameMoveRects(0, nullptr, &moveRectsBufferSize);
+    if (SUCCEEDED(hr) && moveRectsBufferSize > 0) {
+        // 移动矩形：DXGI_OUTDUPL_MOVE_RECT 包含 SourcePoint 和 DestinationRect
+        // 处理移动矩形：需要从源位置复制到目标位置，然后标记源位置为脏
+        UINT moveCount = moveRectsBufferSize / sizeof(DXGI_OUTDUPL_MOVE_RECT);
+        std::vector<DXGI_OUTDUPL_MOVE_RECT> moveRects(moveCount);
+        hr = outputDuplication_->GetFrameMoveRects(
+            moveRectsBufferSize,
+            reinterpret_cast<DXGI_OUTDUPL_MOVE_RECT*>(moveRects.data()),
+            &moveRectsBufferSize
+        );
+        
+        if (SUCCEEDED(hr) && previousFrameTexture_) {
+            // 对于移动矩形，先从上一帧复制源区域到目标区域
+            for (const auto& moveRect : moveRects) {
+                // 复制移动的区域
+                D3D11_BOX srcBox = {};
+                srcBox.left = moveRect.SourcePoint.x;
+                srcBox.top = moveRect.SourcePoint.y;
+                srcBox.right = moveRect.SourcePoint.x + (moveRect.DestinationRect.right - moveRect.DestinationRect.left);
+                srcBox.bottom = moveRect.SourcePoint.y + (moveRect.DestinationRect.bottom - moveRect.DestinationRect.top);
+                srcBox.front = 0;
+                srcBox.back = 1;
+                
+                d3dContext_->CopySubresourceRegion(
+                    previousFrameTexture_.Get(), 0,
+                    moveRect.DestinationRect.left,
+                    moveRect.DestinationRect.top,
+                    0,
+                    previousFrameTexture_.Get(), 0,
+                    &srcBox
+                );
+                
+                // 标记源位置为脏（添加到脏矩形列表）
+                types::Rect srcRect;
+                srcRect.x = moveRect.SourcePoint.x;
+                srcRect.y = moveRect.SourcePoint.y;
+                srcRect.width = moveRect.DestinationRect.right - moveRect.DestinationRect.left;
+                srcRect.height = moveRect.DestinationRect.bottom - moveRect.DestinationRect.top;
+                dirtyRects.push_back(srcRect);
+            }
+        }
+    }
+    
+    // 如果脏矩形数量超过限制或为空，使用全帧复制
+    // DXGI最多支持16个脏矩形，如果超过则回退到全帧复制
+    bool useIncremental = !dirtyRects.empty() && dirtyRects.size() <= 16 && previousFrameTexture_;
+    
+    if (useIncremental) {
+        // 增量更新：先复制上一帧到当前staging texture
+        d3dContext_->CopyResource(stagingTextures_[writeIndex].Get(), previousFrameTexture_.Get());
+        
+        // 只复制脏矩形区域（使用统一的复制函数）
+        copyGPUTextureToStaging(
+            desktopTexture.Get(),
+            stagingTextures_[writeIndex].Get(),
+            &dirtyRects
+        );
+    } else {
+        // 全帧复制（使用统一的复制函数，传入nullptr表示全帧复制）
+        copyGPUTextureToStaging(
+            desktopTexture.Get(),
+            stagingTextures_[writeIndex].Get(),
+            nullptr
+        );
+    }
+    
+    // 更新上一帧纹理（用于下次增量更新）
+    if (previousFrameTexture_) {
+        d3dContext_->CopyResource(previousFrameTexture_.Get(), desktopTexture.Get());
+    }
+    
+    // 插入 GPU 同步点
+    d3dContext_->End(query_.Get());
+    
+    // 等待 GPU 完成复制操作（在释放帧之前）
+    BOOL queryData = FALSE;
+    int waitCount = 0;
+    const int maxWaitCount = 1000; // 最多等待1秒
+    while (d3dContext_->GetData(query_.Get(), &queryData, sizeof(queryData), 0) == S_FALSE) {
+        if (++waitCount > maxWaitCount) {
+            outputDuplication_->ReleaseFrame();
+            setLastError("GPU copy operation timeout");
+            return std::nullopt;
+        }
+        Sleep(1);
+    }
+    
+    // 现在才释放帧（在数据完全复制后）
     outputDuplication_->ReleaseFrame();
     
-    // 转换为ImageData
-    return textureToImageData(stagingTexture_.Get(), outputWidth_, outputHeight_);
+    // 从写入缓冲区读取数据（数据已完全复制完成）
+    auto result = textureToImageData(stagingTextures_[writeIndex].Get(), outputWidth_, outputHeight_);
+    
+    // 切换到写入的缓冲区作为下次读取的缓冲区
+    currentStagingIndex_ = writeIndex;
+    
+    return result;
+}
+bool ScreenCaptureWindows::copyGPUTextureToStaging(
+    ID3D11Texture2D* srcTexture,
+    ID3D11Texture2D* dstTexture,
+    const std::vector<types::Rect>* dirtyRects) {
+    
+    if (!srcTexture || !dstTexture) {
+        return false;
+    }
+    
+    if (!dirtyRects || dirtyRects->empty()) {
+        // 全帧复制
+        d3dContext_->CopyResource(dstTexture, srcTexture);
+        return true;
+    }
+    
+    // 增量更新：只复制脏矩形区域
+    for (const auto& dirtyRect : *dirtyRects) {
+        D3D11_BOX srcBox = {};
+        srcBox.left = dirtyRect.x;
+        srcBox.top = dirtyRect.y;
+        srcBox.right = dirtyRect.x + dirtyRect.width;
+        srcBox.bottom = dirtyRect.y + dirtyRect.height;
+        srcBox.front = 0;
+        srcBox.back = 1;
+        
+        d3dContext_->CopySubresourceRegion(
+            dstTexture, 0,
+            dirtyRect.x,
+            dirtyRect.y,
+            0,
+            srcTexture, 0,
+            &srcBox
+        );
+    }
+    
+    return true;
 }
 
 std::optional<types::ImageData> ScreenCaptureWindows::textureToImageData(
@@ -595,10 +1035,15 @@ std::optional<types::ImageData> ScreenCaptureWindows::textureToImageData(
         return std::nullopt;
     }
     
+    // 获取纹理格式
+    D3D11_TEXTURE2D_DESC texDesc = {};
+    texture->GetDesc(&texDesc);
+    
     D3D11_MAPPED_SUBRESOURCE mapped;
     HRESULT hr = d3dContext_->Map(texture, 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr)) {
-        setLastError("Failed to map texture");
+        setLastError("Failed to map texture (HRESULT: 0x" + 
+                    std::to_string(static_cast<unsigned int>(hr)) + ")");
         return std::nullopt;
     }
     
@@ -606,20 +1051,38 @@ std::optional<types::ImageData> ScreenCaptureWindows::textureToImageData(
     types::ImageData imageData;
     imageData.allocate(width, height, types::ImageFormat::BGR);
     
-    // 从BGRA转换为BGR(跳过Alpha通道)
+    // 根据纹理格式进行转换
     const uint8_t* src = static_cast<const uint8_t*>(mapped.pData);
     uint8_t* dst = imageData.data.data();
     
-    for (uint32_t y = 0; y < height; ++y) {
-        const uint8_t* srcRow = src + y * mapped.RowPitch;
-        uint8_t* dstRow = dst + y * width * 3;
-        
-        for (uint32_t x = 0; x < width; ++x) {
-            // BGRA -> BGR
-            dstRow[x * 3 + 0] = srcRow[x * 4 + 0]; // B
-            dstRow[x * 3 + 1] = srcRow[x * 4 + 1]; // G
-            dstRow[x * 3 + 2] = srcRow[x * 4 + 2]; // R
+    if (texDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM || 
+        texDesc.Format == DXGI_FORMAT_R8G8B8A8_UNORM) {
+        // BGRA 或 RGBA 格式，从4字节转换为3字节
+        for (uint32_t y = 0; y < height; ++y) {
+            const uint8_t* srcRow = src + y * mapped.RowPitch;
+            uint8_t* dstRow = dst + y * width * 3;
+            
+            if (texDesc.Format == DXGI_FORMAT_B8G8R8A8_UNORM) {
+                // BGRA -> BGR
+                for (uint32_t x = 0; x < width; ++x) {
+                    dstRow[x * 3 + 0] = srcRow[x * 4 + 0]; // B
+                    dstRow[x * 3 + 1] = srcRow[x * 4 + 1]; // G
+                    dstRow[x * 3 + 2] = srcRow[x * 4 + 2]; // R
+                }
+            } else {
+                // RGBA -> BGR (需要交换 R 和 B)
+                for (uint32_t x = 0; x < width; ++x) {
+                    dstRow[x * 3 + 0] = srcRow[x * 4 + 2]; // B (从 R 来)
+                    dstRow[x * 3 + 1] = srcRow[x * 4 + 1]; // G
+                    dstRow[x * 3 + 2] = srcRow[x * 4 + 0]; // R (从 B 来)
+                }
+            }
         }
+    } else {
+        // 不支持的格式
+        d3dContext_->Unmap(texture, 0);
+        setLastError("Unsupported texture format: " + std::to_string(static_cast<int>(texDesc.Format)));
+        return std::nullopt;
     }
     
     d3dContext_->Unmap(texture, 0);

@@ -123,6 +123,8 @@ void testFullScreenCapture(ScreenCapture* capture) {
     auto* windowsCapture = dynamic_cast<naw::desktop_pet::service::platform::ScreenCaptureWindows*>(capture);
     if (windowsCapture) {
         std::cout << "Before capture - Method: " << windowsCapture->getCaptureMethod() << std::endl;
+        std::cout << "  GraphicsCapture available: " << (windowsCapture->getCaptureMethod() == "GraphicsCapture" ? "Yes" : "No") << std::endl;
+        std::cout << "  DXGI available: " << (windowsCapture->isDXGIAvailable() ? "Yes" : "No") << std::endl;
     }
 #endif
     
@@ -139,16 +141,21 @@ void testFullScreenCapture(ScreenCapture* capture) {
         std::string method = windowsCapture->getCaptureMethod();
         std::cout << "  Method: " << method;
         
-        if (method == "GraphicsCapture") {
-            std::cout << " (Windows.Graphics.Capture API - Best performance, supports multiple concurrent captures)";
-        } else if (method == "DXGI") {
-            std::cout << " (DXGI Desktop Duplication - Hardware accelerated)";
+        if (method == "DXGI") {
+            std::cout << " (DXGI Desktop Duplication - Hardware accelerated, optimal performance)";
+        } else if (method == "GraphicsCapture") {
+            std::cout << " (Windows.Graphics.Capture API - Fallback, supports multiple concurrent captures)";
+            // 如果使用了 GraphicsCapture，说明 DXGI 可能被占用
+            std::string error = capture->getLastError();
+            if (!error.empty() && error.find("DXGI failed") != std::string::npos) {
+                std::cout << std::endl << "  Note: DXGI was unavailable - " << error;
+            }
         } else {
             std::cout << " (BitBlt - Software fallback)";
             // 如果使用了 BitBlt，显示可能的错误信息
             std::string error = capture->getLastError();
             if (!error.empty() && error != "Success") {
-                std::cout << std::endl << "  Note: GraphicsCapture/DXGI failed - " << error;
+                std::cout << std::endl << "  Note: DXGI/GraphicsCapture failed - " << error;
             }
         }
         std::cout << std::endl;
@@ -319,8 +326,10 @@ void testPerformance(ScreenCapture* capture) {
     if (windowsCapture) {
         std::string finalMethod = windowsCapture->getCaptureMethod();
         std::cout << "Final capture method: " << finalMethod << std::endl;
-        if (finalMethod == "GraphicsCapture") {
-            std::cout << "  Using Windows.Graphics.Capture API - optimal performance achieved!" << std::endl;
+        if (finalMethod == "DXGI") {
+            std::cout << "  Using DXGI Desktop Duplication - optimal performance achieved!" << std::endl;
+        } else if (finalMethod == "GraphicsCapture") {
+            std::cout << "  Using Windows.Graphics.Capture API - good performance (DXGI unavailable)" << std::endl;
         }
     }
 #endif
@@ -355,18 +364,19 @@ int main() {
         std::string method = windowsCapture->getCaptureMethod();
         std::cout << "  Capture method: " << method << std::endl;
         
-        if (method == "GraphicsCapture") {
-            std::cout << "  Status: Using Windows.Graphics.Capture API (Windows 10 1803+)" << std::endl;
-            std::cout << "  Benefits:" << std::endl;
-            std::cout << "    - Best performance and quality" << std::endl;
-            std::cout << "    - Supports multiple concurrent captures" << std::endl;
-            std::cout << "    - No exclusive access required" << std::endl;
-        } else if (method == "DXGI") {
-            std::cout << "  Status: Using DXGI Desktop Duplication API" << std::endl;
+        if (method == "DXGI") {
+            std::cout << "  Status: Using DXGI Desktop Duplication API (optimal performance)" << std::endl;
             std::cout << "  Benefits:" << std::endl;
             std::cout << "    - Hardware accelerated" << std::endl;
-            std::cout << "    - Good performance" << std::endl;
+            std::cout << "    - Best performance" << std::endl;
             std::cout << "  Note: DXGI requires exclusive access" << std::endl;
+        } else if (method == "GraphicsCapture") {
+            std::cout << "  Status: Using Windows.Graphics.Capture API (fallback)" << std::endl;
+            std::cout << "  Benefits:" << std::endl;
+            std::cout << "    - Good performance and quality" << std::endl;
+            std::cout << "    - Supports multiple concurrent captures" << std::endl;
+            std::cout << "    - No exclusive access required" << std::endl;
+            std::cout << "  Note: DXGI was unavailable or in use by another application" << std::endl;
         } else {
             std::cout << "  Status: Using BitBlt (software fallback)" << std::endl;
             std::cout << "  Note: This method is slower but always available" << std::endl;
@@ -374,9 +384,9 @@ int main() {
         
         std::cout << "  DXGI available: " << (windowsCapture->isDXGIAvailable() ? "Yes" : "No") << std::endl;
         
-        if (method != "GraphicsCapture" && !windowsCapture->isDXGIAvailable()) {
+        if (method != "DXGI" && !windowsCapture->isDXGIAvailable()) {
             std::cout << "  Note: DXGI may be in use by another application" << std::endl;
-            std::cout << "        Windows.Graphics.Capture will be tried first on next capture" << std::endl;
+            std::cout << "        Falling back to Windows.Graphics.Capture or BitBlt" << std::endl;
             
             // 检测可能占用DXGI的程序
             auto occupyingProcesses = windowsCapture->detectDXGIOccupyingProcesses();

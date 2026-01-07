@@ -19,6 +19,7 @@
 #include <roapi.h>
 #include <dcomp.h>
 
+#include <array>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -83,8 +84,9 @@ public:
 private:
     /**
      * @brief 初始化DXGI资源
+     * @param displayId 显示器ID
      */
-    bool initializeDXGI();
+    bool initializeDXGI(int32_t displayId = 0);
     
     /**
      * @brief 清理DXGI资源
@@ -121,6 +123,19 @@ private:
     );
     
     /**
+     * @brief 统一的纹理复制到staging（支持增量更新）
+     * @param srcTexture 源纹理
+     * @param dstTexture 目标staging纹理
+     * @param dirtyRects 脏矩形列表（可选，nullptr表示全帧复制）
+     * @return 成功返回true
+     */
+    bool copyGPUTextureToStaging(
+        ID3D11Texture2D* srcTexture,
+        ID3D11Texture2D* dstTexture,
+        const std::vector<types::Rect>* dirtyRects = nullptr
+    );
+    
+    /**
      * @brief 获取显示器句柄
      */
     HMONITOR getMonitorHandle(int32_t displayId);
@@ -150,7 +165,11 @@ private:
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> d3dContext_;
     Microsoft::WRL::ComPtr<IDXGIOutputDuplication> outputDuplication_;
     Microsoft::WRL::ComPtr<IDXGIOutput1> output1_;
-    Microsoft::WRL::ComPtr<ID3D11Texture2D> stagingTexture_;
+    std::array<Microsoft::WRL::ComPtr<ID3D11Texture2D>, 2> stagingTextures_;  // 双缓冲staging texture
+    int currentStagingIndex_{0};  // 当前使用的缓冲区索引
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> previousFrameTexture_;  // 存储上一帧（用于增量更新）
+    Microsoft::WRL::ComPtr<ID3D11Query> query_;  // 用于同步 GPU 操作
+    std::mutex stagingMutex_;  // 保护缓冲区切换
     
     // 显示器信息
     std::vector<types::DisplayInfo> displays_;
@@ -159,14 +178,18 @@ private:
     // Windows.Graphics.Capture相关资源（使用COM接口）
     bool graphicsCaptureInitialized_{false};
     bool graphicsCaptureAvailable_{false};
+    bool graphicsCaptureFirstFrameReceived_{false};  // 标记是否已收到第一帧
     Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Capture::IGraphicsCaptureItem> captureItem_;
     Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Capture::IDirect3D11CaptureFramePool> framePool_;
     Microsoft::WRL::ComPtr<ABI::Windows::Graphics::Capture::IGraphicsCaptureSession> captureSession_;
     Microsoft::WRL::ComPtr<ABI::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice> graphicsDevice_;
+    std::array<Microsoft::WRL::ComPtr<ID3D11Texture2D>, 2> graphicsCaptureStagingTextures_;  // 双缓冲staging texture
+    int currentGraphicsCaptureStagingIndex_{0};  // 当前使用的缓冲区索引
     
     // 状态
     bool dxgiInitialized_{false};
     bool dxgiAvailable_{false};  // DXGI是否可用（未被占用）
+    bool dxgiFirstCapture_{true};  // DXGI首次截图标志
     int32_t currentDisplayId_{-1};
     uint32_t outputWidth_{0};
     uint32_t outputHeight_{0};
