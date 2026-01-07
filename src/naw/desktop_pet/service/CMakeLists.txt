@@ -31,7 +31,15 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ToolCallContext.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectContextCollector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SpeechService.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ScreenCapture.cpp
 )
+
+# Windows平台屏幕采集源文件
+if(WIN32)
+    list(APPEND SERVICE_FOUNDATION_SOURCES
+        ${CMAKE_CURRENT_SOURCE_DIR}/platform/ScreenCaptureWindows.cpp
+    )
+endif()
 
 set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ErrorTypes.h
@@ -55,13 +63,22 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ToolCallContext.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ProjectContextCollector.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/SpeechService.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ScreenCapture.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/ChatMessage.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/ModelConfig.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/RequestResponse.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/ImageData.h
 )
+
+# Windows平台屏幕采集头文件
+if(WIN32)
+    list(APPEND SERVICE_FOUNDATION_HEADERS
+        ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/platform/ScreenCaptureWindows.h
+    )
+endif()
 
 add_library(NAW_ServiceFoundation STATIC
     ${SERVICE_FOUNDATION_SOURCES}
@@ -85,6 +102,21 @@ target_link_libraries(NAW_ServiceFoundation
         NAW_ServiceAPIClient
         NAW_ServiceUtils
 )
+
+# Windows平台屏幕采集依赖
+if(WIN32)
+    # DXGI和D3D11（Windows SDK的一部分）
+    # Psapi用于进程枚举
+    # Windows Runtime用于Graphics.Capture API
+    target_link_libraries(NAW_ServiceFoundation
+        PRIVATE
+            dxgi
+            d3d11
+            psapi
+            windowsapp  # Windows Runtime (for Graphics.Capture)
+            dcomp       # DirectComposition (for Graphics.Capture interop)
+    )
+endif()
 
 set_target_properties(NAW_ServiceFoundation PROPERTIES
     CXX_STANDARD 20
@@ -345,6 +377,21 @@ if(BUILD_TESTING)
     target_link_libraries(SpeechServiceTest PRIVATE NAW_ServiceFoundation NAW_ServiceUtils)
     target_include_directories(SpeechServiceTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
     add_test(NAME SpeechServiceTest COMMAND SpeechServiceTest)
+
+    add_executable(ScreenCaptureTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ScreenCaptureTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ScreenCaptureTest PRIVATE /GL-)
+        target_link_options(ScreenCaptureTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ScreenCaptureTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(ScreenCaptureTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    # Windows平台需要链接DXGI和D3D11
+    if(WIN32)
+        target_link_libraries(ScreenCaptureTest PRIVATE dxgi d3d11)
+    endif()
+    add_test(NAME ScreenCaptureTest COMMAND ScreenCaptureTest)
 
 endif()
 
