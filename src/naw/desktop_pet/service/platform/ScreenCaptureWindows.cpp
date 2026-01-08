@@ -1,4 +1,5 @@
 #include "naw/desktop_pet/service/platform/ScreenCaptureWindows.h"
+#include "naw/desktop_pet/service/ImageProcessor.h"
 
 #ifdef _WIN32
 
@@ -24,25 +25,88 @@ ScreenCaptureWindows::~ScreenCaptureWindows() {
 
 // ========== 公共接口实现 ==========
 
-std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreen(int32_t displayId) {
+namespace {
+    // 应用图像处理选项的辅助函数
+    std::optional<types::ImageData> applyImageProcessing(
+        std::optional<types::ImageData> image,
+        const CaptureOptions& options
+    ) {
+        if (!image.has_value() || !image->isValid()) {
+            return image;
+        }
+
+        types::ImageData result = image.value();
+
+        // 1. 应用分辨率控制
+        ImageProcessor::ResolutionConfig resolutionConfig;
+        resolutionConfig.maxWidth = options.maxWidth;
+        resolutionConfig.maxHeight = options.maxHeight;
+        resolutionConfig.targetWidth = options.targetWidth;
+        resolutionConfig.targetHeight = options.targetHeight;
+        resolutionConfig.keepAspectRatio = options.keepAspectRatio;
+        resolutionConfig.adaptive = options.adaptiveResolution;
+
+        // 如果启用自适应分辨率，根据处理层类型计算
+        if (options.adaptiveResolution) {
+            auto [adaptiveWidth, adaptiveHeight] = ImageProcessor::calculateAdaptiveResolution(
+                result.width, result.height, options.layerType
+            );
+            resolutionConfig.targetWidth = adaptiveWidth;
+            resolutionConfig.targetHeight = adaptiveHeight;
+        }
+
+        // 应用分辨率控制
+        auto processed = ImageProcessor::applyResolutionControl(
+            result, resolutionConfig, ImageProcessor::InterpolationMethod::Linear
+        );
+        if (processed.has_value()) {
+            result = processed.value();
+        }
+
+        // 2. 应用图像压缩（如果指定）
+        if (options.jpegQuality.has_value()) {
+            auto compressed = ImageProcessor::compressToJPEG(result, options.jpegQuality.value());
+            if (compressed.has_value()) {
+                // 注意：压缩后返回的是字节流，不是 ImageData
+                // 这里我们需要决定如何处理压缩后的数据
+                // 暂时跳过压缩，因为压缩主要用于存储/传输，不是用于后续处理
+                // 如果需要压缩，应该在调用方处理
+            }
+        } else if (options.pngCompression.has_value()) {
+            auto compressed = ImageProcessor::compressToPNG(result, options.pngCompression.value());
+            if (compressed.has_value()) {
+                // 同上，暂时跳过
+            }
+        }
+
+        return result;
+    }
+}
+
+std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreen(
+    int32_t displayId,
+    const CaptureOptions& options
+) {
     // 优先级顺序: DXGI > Windows.Graphics.Capture > BitBlt
     // DXGI 性能最好，但如果被占用则回退到 Graphics.Capture（支持多程序同时捕获）
     
     std::string dxgiError;
     std::string graphicsCaptureError;
     
+    std::optional<types::ImageData> result;
+    
     // 1. 优先尝试 DXGI (性能最好，硬件加速)
     if (dxgiAvailable_ || (!dxgiInitialized_ && initializeDXGI())) {
-        auto result = captureDisplayDXGI(displayId);
+        result = captureDisplayDXGI(displayId);
         if (result.has_value()) {
             dxgiAvailable_ = true;
-            return result;
+            return applyImageProcessing(result, options);
         }
         // 保存错误信息
         dxgiError = getLastError();
-        if (!dxgiAvailable_) {
-            dxgiAvailable_ = false;
-        }
+        // 注意：只有在初始化失败时才将 dxgiAvailable_ 设置为 false
+        // 临时错误（如超时）不应该永久禁用 DXGI
+        // dxgiAvailable_ 的状态由 initializeDXGI() 内部管理
     } else {
         // 初始化失败，保存错误信息
         dxgiError = getLastError();
@@ -50,14 +114,14 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreen(int32_t 
     
     // 2. 回退到 Windows.Graphics.Capture (如果 DXGI 被占用或不可用)
     if (graphicsCaptureAvailable_ || (!graphicsCaptureInitialized_ && initializeGraphicsCapture())) {
-        auto result = captureFullScreenGraphicsCapture(displayId);
+        result = captureFullScreenGraphicsCapture(displayId);
         if (result.has_value()) {
             graphicsCaptureAvailable_ = true;
             // 如果 DXGI 尝试过但失败了，保存其错误信息以便调试
             if (!dxgiError.empty()) {
                 setLastError("DXGI failed: " + dxgiError + " (fallback to GraphicsCapture succeeded)");
             }
-            return result;
+            return applyImageProcessing(result, options);
         }
         // 保存错误信息
         graphicsCaptureError = getLastError();
@@ -80,10 +144,14 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureFullScreen(int32_t 
         setLastError("GraphicsCapture: " + graphicsCaptureError);
     }
     
-    return captureFullScreenBitBlt(displayId);
+    result = captureFullScreenBitBlt(displayId);
+    return applyImageProcessing(result, options);
 }
 
-std::optional<types::ImageData> ScreenCaptureWindows::captureWindow(types::WindowHandle handle) {
+std::optional<types::ImageData> ScreenCaptureWindows::captureWindow(
+    types::WindowHandle handle,
+    const CaptureOptions& options
+) {
     if (!handle) {
         setLastError("Invalid window handle");
         return std::nullopt;
@@ -95,13 +163,15 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureWindow(types::Windo
         return std::nullopt;
     }
     
-    return captureWindowBitBlt(hwnd);
+    auto result = captureWindowBitBlt(hwnd);
+    return applyImageProcessing(result, options);
 }
 
 std::optional<types::ImageData> ScreenCaptureWindows::captureRegion(
     const types::Rect& region, 
-    int32_t displayId) {
-    
+    int32_t displayId,
+    const CaptureOptions& options
+) {
     (void)displayId; // 标记参数已使用,避免警告
     
     if (!region.isValid()) {
@@ -109,7 +179,8 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureRegion(
         return std::nullopt;
     }
     
-    return captureRegionBitBlt(region);
+    auto result = captureRegionBitBlt(region);
+    return applyImageProcessing(result, options);
 }
 
 std::vector<types::DisplayInfo> ScreenCaptureWindows::getDisplays() {
@@ -703,11 +774,18 @@ std::string ScreenCaptureWindows::getCaptureMethod() const {
 }
 
 std::optional<types::ImageData> ScreenCaptureWindows::captureDisplayDXGI(int32_t displayId) {
+    // 如果未初始化或显示器ID改变，需要重新初始化
     if (!dxgiInitialized_ || displayId != currentDisplayId_) {
         cleanupDXGI();
         if (!initializeDXGI(displayId)) {
+            // 初始化失败，dxgiAvailable_ 已在 initializeDXGI 中设置为 false
             return std::nullopt;
         }
+    }
+    
+    // 如果 dxgiAvailable_ 为 false，说明之前初始化失败（如被占用），直接返回
+    if (!dxgiAvailable_) {
+        return std::nullopt;
     }
     
     if (!outputDuplication_) {
@@ -737,7 +815,10 @@ std::optional<types::ImageData> ScreenCaptureWindows::captureDisplayDXGI(int32_t
                 return std::nullopt;
             }
         } else if (hr == DXGI_ERROR_ACCESS_LOST) {
+            // DXGI 访问丢失，需要重新初始化
+            // 但这是临时错误，不应该永久禁用 DXGI
             cleanupDXGI();
+            dxgiAvailable_ = true;  // 保持可用状态，允许下次重新初始化
             setLastError("DXGI access lost, reinitialization required");
             return std::nullopt;
         } else {

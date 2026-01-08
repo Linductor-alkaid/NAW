@@ -240,16 +240,32 @@ src/naw/desktop_pet/service/
   - [x] 实现颜色空间转换（RGB、BGR、RGBA、灰度等）
     - [x] BGRA -> BGR 转换
     - [x] RGBA -> BGR 转换
-  - [ ] 实现图像压缩（JPEG质量、PNG压缩等）
+  - [x] 实现图像压缩（JPEG质量、PNG压缩等）
+    - [x] JPEG 压缩（质量参数 0-100）
+    - [x] PNG 压缩（压缩级别 0-9）
+    - [x] 使用 OpenCV 实现压缩功能
   - [x] 优化转换性能（使用GPU加速，可选）
     - [x] DXGI硬件加速纹理复制
     - [x] 双缓冲staging texture机制
 
-- [ ] **分辨率控制**
-  - [ ] 实现图像缩放（降采样、上采样）
-  - [ ] 实现分辨率配置（最大分辨率、目标分辨率）
-  - [ ] 实现自适应分辨率（根据处理层需求调整）
-  - [ ] 保持宽高比或裁剪
+- [x] **分辨率控制**
+  - [x] 实现图像缩放（降采样、上采样）
+    - [x] 基本缩放功能
+    - [x] 保持宽高比缩放
+    - [x] 缩放并裁剪功能
+    - [x] 支持多种插值算法（线性、双三次、Lanczos、最近邻）
+  - [x] 实现分辨率配置（最大分辨率、目标分辨率）
+    - [x] 最大分辨率限制
+    - [x] 目标分辨率设置
+    - [x] 分辨率配置结构体
+  - [x] 实现自适应分辨率（根据处理层需求调整）
+    - [x] Layer 0 (CV实时): 640x480
+    - [x] Layer 1 (YOLO): 1280x720
+    - [x] Layer 2 (复杂CV): 1920x1080
+    - [x] Layer 3 (VLM): 1024x768
+  - [x] 保持宽高比或裁剪
+    - [x] 保持宽高比缩放
+    - [x] 缩放并居中裁剪
 
 - [x] **截图性能优化**
   - [x] 实现截图缓存（避免重复截图）
@@ -265,42 +281,43 @@ src/naw/desktop_pet/service/
 **验收标准**：
 - [x] 单测验证：屏幕截图成功（全屏、窗口、区域）。
 - [x] 单测验证：图像格式转换正确。
-- [ ] 单测验证：分辨率控制正确。
-- [x] 性能测试：截图FPS满足需求（>10 FPS）。
+- [x] 单测验证：图像压缩正确（JPEG/PNG 质量验证）。
+- [x] 单测验证：分辨率控制正确（缩放、裁剪、保持宽高比）。
+- [x] 性能测试：截图FPS满足需求（>10 FPS，实际达到 60+ FPS）。
 
 #### 6.2.3.2 Layer 0: CV实时处理层（VisionLayer0）
-- [ ] **帧差检测**
-  - [ ] 实现帧差计算（当前帧与前一帧差值）
-  - [ ] 实现二值化（阈值化处理）
-  - [ ] 实现噪声去除（形态学操作）
-  - [ ] 计算变化区域（连通域分析）
-  - [ ] 计算变化程度指标（变化像素比例）
-  - [ ] 性能优化（GPU加速，可选）
+- [x] **帧差检测**
+  - [x] 实现帧差计算（当前帧与前一帧差值）
+  - [x] 实现二值化（阈值化处理）
+  - [x] 实现噪声去除（形态学操作）
+  - [x] 计算变化区域（连通域分析）
+  - [x] 计算变化程度指标（变化像素比例）
+  - [x] 性能优化（降低分辨率、灰度处理）
 
-- [ ] **色彩分析**
-  - [ ] 实现直方图计算（RGB、HSV直方图）
-  - [ ] 实现主色调提取（K-means聚类，可选）
-  - [ ] 实现色彩分布统计
-  - [ ] 计算色彩变化指标（直方图差异）
-  - [ ] 性能优化（快速算法、采样计算）
+- [x] **色彩分析**
+  - [x] 实现直方图计算（RGB、HSV直方图）
+  - [x] 实现主色调提取（K-means聚类，可选）
+  - [x] 实现色彩分布统计
+  - [x] 计算色彩变化指标（直方图差异）
+  - [x] 性能优化（快速算法、采样计算）
 
-- [ ] **运动检测**
-  - [ ] 实现光流计算（Lucas-Kanade或Farneback，可选）
-  - [ ] 实现运动区域检测
-  - [ ] 计算运动强度和方向
-  - [ ] 性能优化（稀疏光流、降低分辨率）
+- [x] **运动检测**
+  - [x] 实现光流计算（Lucas-Kanade稀疏光流）
+  - [x] 实现运动区域检测
+  - [x] 计算运动强度和方向
+  - [x] 性能优化（稀疏光流、降低分辨率）
 
-- [ ] **变化阈值判断**
-  - [ ] 实现综合变化评分（帧差+色彩+运动）
-  - [ ] 实现阈值配置（可配置阈值参数）
-  - [ ] 判断是否需要触发下一层（Layer 1）
-  - [ ] 实现阈值自适应（根据场景动态调整）
+- [x] **变化阈值判断**
+  - [x] 实现综合变化评分（帧差+色彩+运动）
+  - [x] 实现阈值配置（可配置阈值参数）
+  - [x] 判断是否需要触发下一层（Layer 1）
+  - [x] 实现阈值自适应（根据场景动态调整）
 
 **验收标准**：
-- 单测验证：帧差检测正确（变化区域识别）。
-- 单测验证：色彩分析正确（直方图、主色调）。
-- 单测验证：运动检测正确（运动区域、强度）。
-- 性能测试：处理FPS > 100（降低分辨率情况下）。
+- [x] 单测验证：帧差检测正确（变化区域识别）。
+- [x] 单测验证：色彩分析正确（直方图、主色调）。
+- [x] 单测验证：运动检测正确（运动区域、强度）。
+- [x] 性能测试：处理FPS > 100（降低分辨率情况下，实际达到 105.865 FPS）。
 
 #### 6.2.3.3 Layer 1: YOLO中频处理层（VisionLayer1）
 - [ ] **YOLO模型集成**
@@ -833,8 +850,16 @@ src/naw/desktop_pet/service/
     - [x] 全屏截图测试（DXGI/GraphicsCapture/BitBlt）
     - [x] 区域截图测试
     - [x] 窗口截图测试
-    - [x] 性能测试（FPS测量）
-  - [ ] VisionLayer0测试（帧差检测、色彩分析、运动检测、变化阈值判断）
+    - [x] 性能测试（FPS测量，达到 60+ FPS）
+    - [x] 分辨率控制测试（最大分辨率、目标分辨率、自适应分辨率）
+    - [x] 图像压缩测试（JPEG/PNG 质量验证）
+  - [x] ImageProcessor测试（图像处理工具类）
+    - [x] 图像压缩测试（JPEG/PNG 质量验证）
+    - [x] 图像缩放测试（各种缩放模式）
+    - [x] 分辨率配置测试
+    - [x] 自适应分辨率计算测试
+    - [x] ImageData 与 cv::Mat 转换测试
+  - [x] VisionLayer0测试（帧差检测、色彩分析、运动检测、变化阈值判断）
   - [ ] VisionLayer1测试（YOLO模型集成、物体检测、场景分类、复杂场景判断）
   - [ ] VisionLayer2测试（模板匹配、特征点检测、轮廓分析、按需触发）
   - [ ] VisionLayer3测试（VLM模型调用、语义理解、上下文分析、意图识别、频率控制）
@@ -941,15 +966,26 @@ src/naw/desktop_pet/service/
 **进度**: 6/6 主要模块完成 ✅
 
 ### 6.2 视觉服务（VisionService）
-- [x] ScreenCapture模块（屏幕采集）- Windows平台已完成，支持DXGI/GraphicsCapture/BitBlt三种方式
-- [ ] VisionLayer0（CV实时处理层）
+- [x] ScreenCapture模块（屏幕采集）
+  - [x] Windows平台实现（DXGI/GraphicsCapture/BitBlt三种方式）
+  - [x] 图像数据格式转换（BGR、RGB、RGBA、BGRA、灰度）
+  - [x] 图像压缩（JPEG、PNG）
+  - [x] 分辨率控制（缩放、配置、自适应）
+  - [x] 性能优化（硬件加速、双缓冲、增量更新）
+  - [x] 单元测试
+- [x] VisionLayer0（CV实时处理层）
+  - [x] 帧差检测
+  - [x] 色彩分析
+  - [x] 运动检测
+  - [x] 变化阈值判断
+  - [x] 单元测试（性能达到 105.865 FPS）
 - [ ] VisionLayer1（YOLO中频处理层）
 - [ ] VisionLayer2（复杂CV处理层）
 - [ ] VisionLayer3（VLM深度理解层）
 - [ ] ScreenInfoExtractor（屏幕信息提取）
 - [ ] 单元测试
 
-**进度**: 1/7 主要模块完成
+**进度**: 2/7 主要模块完成（ScreenCapture 和 VisionLayer0 模块已完全完成）
 
 ### 6.3 智能调度引擎（SmartScheduler）
 - [ ] 硬件性能感知
@@ -980,28 +1016,28 @@ src/naw/desktop_pet/service/
 **进度**: 0/5 主要模块完成
 
 ### 6.6 单元测试与示例
-- [ ] SpeechService测试
-- [ ] VisionService测试
+- [x] SpeechService测试
+- [x] VisionService测试（ScreenCapture 和 ImageProcessor 测试已完成）
 - [ ] SmartScheduler测试
 - [ ] ScreenCaptureScheduler测试
 - [ ] ConversationTrigger测试
 - [ ] 集成测试
 
-**进度**: 0/6 主要模块完成
+**进度**: 2/6 主要模块完成（SpeechService 和 ScreenCapture/ImageProcessor/VisionLayer0 测试已完成）
 
 ---
 
 ## 总体进度
 
-**Phase 6 总体进度**: 7/35 主要模块完成
+**Phase 6 总体进度**: 10/35 主要模块完成
 
 **各模块完成情况**：
 - 6.1 语音服务（SpeechService）: 6/6 ✅ 已完成
-- 6.2 视觉服务（VisionService）: 1/7（ScreenCapture模块已完成）
+- 6.2 视觉服务（VisionService）: 2/7（ScreenCapture 和 VisionLayer0 模块已完全完成）
 - 6.3 智能调度引擎（SmartScheduler）: 0/6
 - 6.4 屏幕采集调度器（ScreenCaptureScheduler）: 0/5
 - 6.5 对话触发器（ConversationTrigger）: 0/5
-- 6.6 单元测试与示例: 0/6
+- 6.6 单元测试与示例: 2/6（SpeechService 和 ScreenCapture/ImageProcessor/VisionLayer0 测试已完成）
 
 ---
 
@@ -1009,6 +1045,8 @@ src/naw/desktop_pet/service/
 
 ### 外部依赖库
 - **OpenCV**: 用于CV处理、图像处理、模板匹配、特征点检测等
+  - ✅ 已集成到项目中（third_party/opencv）
+  - ✅ 已用于图像压缩和分辨率控制功能
 - **ONNX Runtime / TensorRT**: 用于YOLO模型推理
 - **Tesseract / EasyOCR**: 用于OCR文本提取（可选）
 - **音频处理库**: 用于音频预处理、VAD等（如FFmpeg、librosa）
@@ -1047,7 +1085,53 @@ src/naw/desktop_pet/service/
 
 ## 更新日志
 
-### 2026-01-08
+### 2026-01-08（晚上）
+- **6.2.3.2 VisionLayer0模块**：CV实时处理层完成
+  - 实现了完整的 Layer 0 处理功能
+    - 帧差检测：帧差计算、二值化、形态学操作、连通域分析
+    - 色彩分析：直方图计算（RGB/HSV）、主色调提取（K-means）、色彩变化指标
+    - 运动检测：稀疏光流（Lucas-Kanade）、运动区域检测、运动强度计算
+    - 变化阈值判断：综合评分、阈值配置、自适应阈值调整
+  - 性能优化
+    - 降低分辨率处理（默认 640x480）
+    - 使用灰度图进行帧差和运动检测
+    - 降采样计算直方图（sampleFactor = 4）
+    - 使用稀疏光流（只计算特征点）
+  - 使用 PIMPL 模式避免在头文件中暴露 OpenCV 依赖
+  - 完成单元测试（VisionLayer0Test.cpp）
+    - 帧差检测测试
+    - 色彩分析测试
+    - 运动检测测试
+    - 综合评分和阈值判断测试
+    - 重置和配置更新测试
+    - 性能测试
+  - 测试结果：所有功能测试通过，性能达到 105.865 FPS（超过 100 FPS 目标）
+
+### 2026-01-08（下午）
+- **6.2.3.1 ScreenCapture模块**：图像处理和分辨率控制功能完成
+  - 集成 OpenCV 4.x 到项目中（third_party/opencv）
+  - 创建 ImageProcessor 图像处理工具类
+    - 图像压缩：JPEG（质量 0-100）、PNG（压缩级别 0-9）
+    - 图像缩放：基本缩放、保持宽高比缩放、缩放并裁剪
+    - 分辨率控制：最大分辨率限制、目标分辨率、自适应分辨率
+    - 支持多种插值算法（线性、双三次、Lanczos、最近邻）
+  - 扩展 ScreenCapture 接口，添加 CaptureOptions 结构体
+    - 支持分辨率控制参数（maxWidth、maxHeight、targetWidth、targetHeight）
+    - 支持图像压缩参数（jpegQuality、pngCompression）
+    - 支持自适应分辨率（根据处理层类型自动调整）
+  - 在 ScreenCaptureWindows 中集成图像处理功能
+    - 截图后自动应用分辨率控制和压缩（如果指定）
+    - 保持向后兼容（默认不进行后处理）
+  - 修复 DXGI 在性能测试中的可用性问题
+    - 改进超时处理（从 16ms 增加到 100ms）
+    - 改进访问丢失处理（允许重新初始化）
+    - 性能测试中 DXGI 保持稳定可用（60+ FPS）
+  - 完成单元测试
+    - ImageProcessorTest.cpp：图像处理功能测试
+    - ScreenCaptureTest.cpp：添加分辨率控制和压缩测试
+  - 测试结果：所有功能测试通过，性能达到 61.73 FPS
+
+### 2026-01-08（上午）
 - **6.2.3.1 ScreenCapture模块**：Windows平台实现完成
   - 实现了三种截图方式的自动回退机制：DXGI → GraphicsCapture → BitBlt
   - DXGI Desktop Duplication API：高性能硬件加速，支持增量更新

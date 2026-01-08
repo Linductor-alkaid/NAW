@@ -1,10 +1,12 @@
 #include "naw/desktop_pet/service/ScreenCapture.h"
+#include "naw/desktop_pet/service/ImageProcessor.h"
 
 #ifdef _WIN32
 #include <windows.h>
 #include "naw/desktop_pet/service/platform/ScreenCaptureWindows.h"
 #endif
 
+#include <cassert>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -14,6 +16,8 @@
 #include <vector>
 
 using naw::desktop_pet::service::ScreenCapture;
+using naw::desktop_pet::service::CaptureOptions;
+using naw::desktop_pet::service::ImageProcessor;
 using naw::desktop_pet::service::types::ImageData;
 using naw::desktop_pet::service::types::ImageFormat;
 using naw::desktop_pet::service::types::DisplayInfo;
@@ -288,6 +292,141 @@ void testWindowCapture(ScreenCapture* capture) {
 #endif
 }
 
+// 测试分辨率控制
+void testResolutionControl(ScreenCapture* capture) {
+    std::cout << "\n=== Test Resolution Control ===" << std::endl;
+    
+    // 测试最大分辨率限制
+    {
+        CaptureOptions options;
+        options.maxWidth = 1280;
+        options.maxHeight = 720;
+        options.keepAspectRatio = true;
+        
+        std::cout << "Testing max resolution limit (1280x720)..." << std::endl;
+        auto image = capture->captureFullScreen(0, options);
+        if (image.has_value()) {
+            const auto& img = image.value();
+            std::cout << "  Original capture size: " << img.width << "x" << img.height << std::endl;
+            assert(img.width <= options.maxWidth.value());
+            assert(img.height <= options.maxHeight.value());
+            std::cout << "  Resolution control applied successfully!" << std::endl;
+        } else {
+            std::cerr << "  Error: Capture failed - " << capture->getLastError() << std::endl;
+        }
+    }
+    
+    // 测试目标分辨率
+    {
+        CaptureOptions options;
+        options.targetWidth = 640;
+        options.targetHeight = 480;
+        options.keepAspectRatio = true;
+        
+        std::cout << "Testing target resolution (640x480, keep aspect ratio)..." << std::endl;
+        auto image = capture->captureFullScreen(0, options);
+        if (image.has_value()) {
+            const auto& img = image.value();
+            std::cout << "  Result size: " << img.width << "x" << img.height << std::endl;
+            // 由于保持宽高比，实际尺寸可能不完全匹配
+            std::cout << "  Aspect ratio preserved: " << (img.width * 480 == img.height * 640 ? "Yes" : "No") << std::endl;
+        } else {
+            std::cerr << "  Error: Capture failed - " << capture->getLastError() << std::endl;
+        }
+    }
+    
+    // 测试自适应分辨率
+    {
+        CaptureOptions options;
+        options.adaptiveResolution = true;
+        options.layerType = 0; // CV实时处理层
+        
+        std::cout << "Testing adaptive resolution (Layer 0 - CV real-time)..." << std::endl;
+        auto image = capture->captureFullScreen(0, options);
+        if (image.has_value()) {
+            const auto& img = image.value();
+            std::cout << "  Adaptive size: " << img.width << "x" << img.height << std::endl;
+            // Layer 0 应该降低到 640x480 或更小
+            assert(img.width <= 640);
+            assert(img.height <= 480);
+            std::cout << "  Adaptive resolution applied successfully!" << std::endl;
+        } else {
+            std::cerr << "  Error: Capture failed - " << capture->getLastError() << std::endl;
+        }
+    }
+}
+
+// 测试图像压缩
+void testImageCompression(ScreenCapture* capture) {
+    std::cout << "\n=== Test Image Compression ===" << std::endl;
+    
+    // 先捕获一张图像
+    auto originalImage = capture->captureFullScreen(0);
+    if (!originalImage.has_value()) {
+        std::cerr << "Error: Failed to capture image for compression test - " << capture->getLastError() << std::endl;
+        return;
+    }
+    
+    const auto& img = originalImage.value();
+    std::cout << "Original image size: " << img.width << "x" << img.height << std::endl;
+    std::cout << "Original data size: " << img.data.size() << " bytes" << std::endl;
+    
+    // 测试 JPEG 压缩
+    {
+        std::cout << "Testing JPEG compression (quality: 85)..." << std::endl;
+        auto compressed = ImageProcessor::compressToJPEG(img, 85);
+        if (compressed.has_value()) {
+            std::cout << "  Compressed size: " << compressed->size() << " bytes" << std::endl;
+            double ratio = (1.0 - static_cast<double>(compressed->size()) / img.data.size()) * 100.0;
+            std::cout << "  Compression ratio: " << ratio << "%" << std::endl;
+            
+            // 保存压缩后的 JPEG
+            std::string filename = "test_compressed.jpg";
+            std::ofstream file(filename, std::ios::binary);
+            if (file.is_open()) {
+                file.write(reinterpret_cast<const char*>(compressed->data()), compressed->size());
+                file.close();
+                std::cout << "  Saved to: " << filename << std::endl;
+            }
+        } else {
+            std::cerr << "  Error: JPEG compression failed" << std::endl;
+        }
+    }
+    
+    // 测试 PNG 压缩
+    {
+        std::cout << "Testing PNG compression (level: 3)..." << std::endl;
+        auto compressed = ImageProcessor::compressToPNG(img, 3);
+        if (compressed.has_value()) {
+            std::cout << "  Compressed size: " << compressed->size() << " bytes" << std::endl;
+            double ratio = (1.0 - static_cast<double>(compressed->size()) / img.data.size()) * 100.0;
+            std::cout << "  Compression ratio: " << ratio << "%" << std::endl;
+            
+            // 保存压缩后的 PNG
+            std::string filename = "test_compressed.png";
+            std::ofstream file(filename, std::ios::binary);
+            if (file.is_open()) {
+                file.write(reinterpret_cast<const char*>(compressed->data()), compressed->size());
+                file.close();
+                std::cout << "  Saved to: " << filename << std::endl;
+            }
+        } else {
+            std::cerr << "  Error: PNG compression failed" << std::endl;
+        }
+    }
+    
+    // 测试不同质量级别的 JPEG
+    {
+        std::cout << "Testing different JPEG quality levels..." << std::endl;
+        for (int quality : {95, 85, 75, 50, 25}) {
+            auto compressed = ImageProcessor::compressToJPEG(img, quality);
+            if (compressed.has_value()) {
+                std::cout << "  Quality " << quality << ": " << compressed->size() << " bytes" << std::endl;
+            }
+        }
+    }
+}
+
 // 性能测试
 void testPerformance(ScreenCapture* capture) {
     std::cout << "\n=== Performance Test ===" << std::endl;
@@ -415,6 +554,8 @@ int main() {
         testFullScreenCapture(capture.get());
         testRegionCapture(capture.get());
         testWindowCapture(capture.get());
+        testResolutionControl(capture.get());
+        testImageCompression(capture.get());
         testPerformance(capture.get());
         
         std::cout << "\n========================================" << std::endl;

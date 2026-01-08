@@ -7,9 +7,9 @@ using PlatformImpl = naw::desktop_pet::service::platform::ScreenCaptureWindows;
 // 其他平台暂未实现
 class PlatformImplStub : public naw::desktop_pet::service::ScreenCapture {
 public:
-    std::optional<types::ImageData> captureFullScreen(int32_t) override { return std::nullopt; }
-    std::optional<types::ImageData> captureWindow(types::WindowHandle) override { return std::nullopt; }
-    std::optional<types::ImageData> captureRegion(const types::Rect&, int32_t) override { return std::nullopt; }
+    std::optional<types::ImageData> captureFullScreen(int32_t, const CaptureOptions&) override { return std::nullopt; }
+    std::optional<types::ImageData> captureWindow(types::WindowHandle, const CaptureOptions&) override { return std::nullopt; }
+    std::optional<types::ImageData> captureRegion(const types::Rect&, int32_t, const CaptureOptions&) override { return std::nullopt; }
     std::vector<types::DisplayInfo> getDisplays() override { return {}; }
     bool supportsWindowCapture() const override { return false; }
     bool supportsRegionCapture() const override { return false; }

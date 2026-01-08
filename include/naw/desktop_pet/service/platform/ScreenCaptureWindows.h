@@ -52,11 +52,18 @@ public:
     ScreenCaptureWindows(ScreenCaptureWindows&&) noexcept = default;
     ScreenCaptureWindows& operator=(ScreenCaptureWindows&&) noexcept = default;
     
-    std::optional<types::ImageData> captureFullScreen(int32_t displayId = 0) override;
-    std::optional<types::ImageData> captureWindow(types::WindowHandle handle) override;
+    std::optional<types::ImageData> captureFullScreen(
+        int32_t displayId = 0,
+        const CaptureOptions& options = {}
+    ) override;
+    std::optional<types::ImageData> captureWindow(
+        types::WindowHandle handle,
+        const CaptureOptions& options = {}
+    ) override;
     std::optional<types::ImageData> captureRegion(
         const types::Rect& region, 
-        int32_t displayId = 0
+        int32_t displayId = 0,
+        const CaptureOptions& options = {}
     ) override;
     std::vector<types::DisplayInfo> getDisplays() override;
     bool supportsWindowCapture() const override { return true; }

@@ -32,6 +32,8 @@ set(SERVICE_FOUNDATION_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/ProjectContextCollector.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/SpeechService.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/ScreenCapture.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/ImageProcessor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/VisionLayer0.cpp
 )
 
 # Windows平台屏幕采集源文件
@@ -64,6 +66,8 @@ set(SERVICE_FOUNDATION_HEADERS
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ProjectContextCollector.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/SpeechService.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ScreenCapture.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/ImageProcessor.h
+    ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/VisionLayer0.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/CommonTypes.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskType.h
     ${CMAKE_SOURCE_DIR}/include/naw/desktop_pet/service/types/TaskPriority.h
@@ -89,6 +93,7 @@ target_include_directories(NAW_ServiceFoundation
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_SOURCE_DIR}/third_party/json/single_include
+        ${CMAKE_SOURCE_DIR}/third_party/opencv/include/opencv4
 )
 
 target_compile_options(NAW_ServiceFoundation
@@ -103,6 +108,19 @@ target_link_libraries(NAW_ServiceFoundation
         NAW_ServiceUtils
 )
 
+# OpenCV 集成
+set(OPENCV_DIR ${CMAKE_SOURCE_DIR}/third_party/opencv)
+set(OPENCV_LIB_DIR ${OPENCV_DIR}/lib)
+set(OPENCV_BIN_DIR ${OPENCV_DIR}/bin)
+
+# OpenCV 核心库
+target_link_libraries(NAW_ServiceFoundation
+    PRIVATE
+        ${OPENCV_LIB_DIR}/opencv_core4.lib
+        ${OPENCV_LIB_DIR}/opencv_imgproc4.lib
+        ${OPENCV_LIB_DIR}/opencv_imgcodecs4.lib
+)
+
 # Windows平台屏幕采集依赖
 if(WIN32)
     # DXGI和D3D11（Windows SDK的一部分）
@@ -115,6 +133,11 @@ if(WIN32)
             psapi
             windowsapp  # Windows Runtime (for Graphics.Capture)
             dcomp       # DirectComposition (for Graphics.Capture interop)
+    )
+    
+    # 设置 OpenCV DLL 搜索路径（Windows）
+    set_target_properties(NAW_ServiceFoundation PROPERTIES
+        VS_DEBUGGER_ENVIRONMENT "PATH=${OPENCV_BIN_DIR};%PATH%"
     )
 endif()
 
@@ -390,8 +413,46 @@ if(BUILD_TESTING)
     # Windows平台需要链接DXGI和D3D11
     if(WIN32)
         target_link_libraries(ScreenCaptureTest PRIVATE dxgi d3d11)
+        # 设置 OpenCV DLL 搜索路径
+        set_target_properties(ScreenCaptureTest PROPERTIES
+            VS_DEBUGGER_ENVIRONMENT "PATH=${OPENCV_BIN_DIR};%PATH%"
+        )
     endif()
     add_test(NAME ScreenCaptureTest COMMAND ScreenCaptureTest)
+
+    add_executable(ImageProcessorTest
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/ImageProcessorTest.cpp
+    )
+    if(MSVC)
+        target_compile_options(ImageProcessorTest PRIVATE /GL-)
+        target_link_options(ImageProcessorTest PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(ImageProcessorTest PRIVATE NAW_ServiceFoundation)
+    target_include_directories(ImageProcessorTest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    # Windows平台需要设置 OpenCV DLL 路径
+    if(WIN32)
+        set_target_properties(ImageProcessorTest PROPERTIES
+            VS_DEBUGGER_ENVIRONMENT "PATH=${OPENCV_BIN_DIR};%PATH%"
+        )
+    endif()
+    add_test(NAME ImageProcessorTest COMMAND ImageProcessorTest)
+
+    add_executable(VisionLayer0Test
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/VisionLayer0Test.cpp
+    )
+    if(MSVC)
+        target_compile_options(VisionLayer0Test PRIVATE /GL-)
+        target_link_options(VisionLayer0Test PRIVATE /LTCG:OFF /INCREMENTAL)
+    endif()
+    target_link_libraries(VisionLayer0Test PRIVATE NAW_ServiceFoundation)
+    target_include_directories(VisionLayer0Test PRIVATE ${CMAKE_SOURCE_DIR}/include)
+    # Windows平台需要设置 OpenCV DLL 路径
+    if(WIN32)
+        set_target_properties(VisionLayer0Test PROPERTIES
+            VS_DEBUGGER_ENVIRONMENT "PATH=${OPENCV_BIN_DIR};%PATH%"
+        )
+    endif()
+    add_test(NAME VisionLayer0Test COMMAND VisionLayer0Test)
 
 endif()
 
