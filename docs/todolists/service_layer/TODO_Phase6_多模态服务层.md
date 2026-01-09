@@ -320,6 +320,11 @@ src/naw/desktop_pet/service/
 - [x] 性能测试：处理FPS > 100（降低分辨率情况下，实际达到 105.865 FPS）。
 
 #### 6.2.3.3 Layer 1: YOLO中频处理层（VisionLayer1）
+
+> **技术选型方案**：详见 `docs/design/Layer1_YOLO_技术选型方案.md`
+> 
+> 该方案针对"相对准确的识别成功率、极高的推理速度、极低的推理占用、更多的可识别目标种类"的需求，提供了详细的模型选择、推理引擎选择、优化策略和实施路线图。
+
 - [ ] **YOLO模型集成**
   - [ ] 集成YOLO推理库（YOLOv8、YOLOv5等，使用ONNX Runtime或TensorRT）
   - [ ] 实现模型加载和初始化
