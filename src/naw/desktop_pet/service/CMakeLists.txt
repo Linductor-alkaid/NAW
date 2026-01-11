@@ -119,6 +119,7 @@ target_link_libraries(NAW_ServiceFoundation
         ${OPENCV_LIB_DIR}/opencv_core4.lib
         ${OPENCV_LIB_DIR}/opencv_imgproc4.lib
         ${OPENCV_LIB_DIR}/opencv_imgcodecs4.lib
+        ${OPENCV_LIB_DIR}/opencv_video4.lib
 )
 
 # Windows平台屏幕采集依赖
